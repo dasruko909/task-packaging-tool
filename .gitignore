@@ -1,0 +1,28 @@
+# Python environments and bytecode
+.venv/
+__pycache__/
+*.py[cod]
+
+# Local task state, source drops, generated packages, and archives
+.packer-projects/
+.packer-trash/
+input/
+output/
+*.zip
+
+# Local configuration and secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Private Solve distributions are supplied separately and must not be committed.
+vendor/wheels/*.whl
+
+# Tooling and operating-system files
+.audit/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.DS_Store
