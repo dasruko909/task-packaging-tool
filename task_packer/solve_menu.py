@@ -16,29 +16,22 @@ from .execution import kill
 from .models import ProjectConfig
 from .solve_native import ROOT, archive_package, copy_package, doctor, environment, native_action, runtime_python
 from .solve4 import write_package_metadata
-from .storage import StateStore, write_json
+from .storage import StateStore, write_json, ensure_new_project
+from .paths import project_code, language_code, checked_tree, checked_path
+from .registry import load_manifest, safe_file
 
 
 DEFAULT_SOLVE_HOST = "https://solve.edu.pl"
 
 
-def _valid_packer_codename(value: str) -> bool:
-    return bool(value) and value.isascii() and len(value) <= 20 and all(
-        character.islower() or character.isdigit() or character in "-_"
-        for character in value
-    )
-
-
 def download_for_editing(codename: str) -> StateStore:
     """Download a server package and register it as a resumable packer project."""
 
-    if not _valid_packer_codename(codename):
-        raise RuntimeError(
-            "Downloaded task code must have at most 20 characters and contain "
-            "only lowercase letters, digits, - or _."
-        )
+    project_code(codename)
     store = StateStore(codename)
+    ensure_new_project(store)
     store.acquire_lock()
+    ensure_new_project(store)
     from .input_sources import (
         IMAGE_SUFFIXES,
         _copy_tree_without_symlinks,
@@ -47,17 +40,9 @@ def download_for_editing(codename: str) -> StateStore:
         prepare_drop_zones,
     )
     destination = package_drop_dir(codename)
-    if store.path.exists():
-        raise RuntimeError(
-            f"Project {codename!r} already exists. Resume it with --project {codename}."
-        )
     if destination.exists() and any(destination.iterdir()):
         raise RuntimeError(
             f"Directory {destination} is not empty. The packer will not overwrite existing materials."
-        )
-    if (Path("output") / codename).exists():
-        raise RuntimeError(
-            f"Directory output/{codename} already exists. Remove the conflict or choose the correct saved project."
         )
     if not doctor()["ready"]:
         raise RuntimeError("Run ./run.sh --doctor to prepare Solve CLI.")
@@ -98,26 +83,31 @@ def download_for_editing(codename: str) -> StateStore:
                 "Solve CLI did not download a complete package. Local project was not created."
             )
         try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest = load_manifest(downloaded)
         except (OSError, json.JSONDecodeError) as error:
             raise RuntimeError("Downloaded package has invalid config.json.") from error
         if not isinstance(manifest, dict):
             raise RuntimeError("Downloaded config.json is not a JSON object.")
 
+        declared_language = manifest.get('default_language')
+        language = language_code(declared_language) if declared_language else 'en'
+        if not (downloaded / 'description' / f'{language}.md').is_file():
+            supported = [p.stem.strip().lower() for p in sorted((downloaded / 'description').glob('*.md'))
+                         if p.stem.strip().lower() in {'pl', 'en'}]
+            language = supported[0] if supported else language
+        ensure_new_project(store)
         prepare_drop_zones(codename)
         try:
             _copy_tree_without_symlinks(downloaded, destination)
         except BaseException:
             # The destination was verified empty above and belongs only to this
             # not-yet-created import, so rolling back its partial files is safe.
+            checked_tree(destination)
             shutil.rmtree(destination, ignore_errors=True)
             raise
 
     descriptions = destination / "description"
     markdowns = sorted(descriptions.glob("*.md")) if descriptions.is_dir() else []
-    language = str(manifest.get("default_language", ""))
-    if not language or not (descriptions / f"{language}.md").is_file():
-        language = markdowns[0].stem if markdowns else "en"
     images = [
         path.name for path in sorted(descriptions.iterdir())
         if path.is_file() and not path.is_symlink() and path.suffix.lower() in IMAGE_SUFFIXES
@@ -292,7 +282,7 @@ def cli_remote(config: ProjectConfig, action: str) -> None:
                 raise RuntimeError("Server returned no preview files.")
             import shutil
             for path in outputs:
-                target = config.package_dir / "description" / path.name
+                target = safe_file(config.package_dir / "description", path.name)
                 shutil.copy2(path, target)
                 print(f"Preview: {target.resolve()}")
         else:
@@ -386,7 +376,7 @@ def check(config: ProjectConfig, *, reuse_native: bool = False) -> dict:
             for name in changed
         ):
             for suffix in ('*.pdf', '*.html'):
-                for preview in (config.package_dir / 'description').glob(suffix):
+                for preview in checked_tree(config.package_dir / 'description').glob(suffix):
                     preview.unlink()
         print('Materials changed or are not yet checked; rerunning local checks.')
         report = Verification(config, usage=usage)
@@ -437,9 +427,9 @@ def action(config: ProjectConfig, name: str) -> None:
     elif name == "connection":
         configure_connection()
     elif name == "report":
-        report = config.package_dir / "verification/report.md"
+        report = checked_path(config.package_dir / "verification/report.md")
         print(report.read_text() if report.is_file() else "No local report exists yet.")
-        native = config.package_dir / "verification/solve-check.json"
+        native = checked_path(config.package_dir / "verification/solve-check.json")
         if native.is_file():
             data = json.loads(native.read_text())
             for row in data.get("solutions", []):

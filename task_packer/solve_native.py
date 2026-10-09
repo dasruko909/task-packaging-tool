@@ -15,6 +15,8 @@ from .execution import kill
 from .models import ProjectConfig
 from .storage import atomic_write_text, write_json
 from .sandbox import isolated
+from .paths import checked_path, checked_tree
+from .registry import safe_file, load_manifest
 
 ROOT = Path(__file__).resolve().parent.parent
 WHEELS = ROOT / "vendor/wheels"
@@ -33,6 +35,7 @@ LOCAL_WALL_TIME_FACTOR = 4
 
 
 def install_standard_checker(name: str, directory: Path) -> None:
+    safe_file(directory, name)
     wheel = WHEELS / "libsolve-1.0.11-py3-none-any.whl"
     if wheel.is_file():
         with zipfile.ZipFile(wheel) as archive:
@@ -109,6 +112,9 @@ def doctor() -> dict:
 
 
 def copy_package(source: Path, destination: Path) -> None:
+    checked_tree(source)
+    checked_tree(destination)
+    load_manifest(source)
     for path in sorted(source.rglob("*")):
         relative = path.relative_to(source)
         if any(part.startswith("prepared_") or part in {"__pycache__", "verification"} for part in relative.parts):
@@ -117,7 +123,7 @@ def copy_package(source: Path, destination: Path) -> None:
             continue
         if path.is_symlink():
             raise RuntimeError(f"Package contains a symbolic link: {relative}")
-        target = destination / relative
+        target = safe_file(destination, relative.as_posix())
         if path.is_dir():
             target.mkdir(parents=True, exist_ok=True)
         else:
@@ -130,7 +136,7 @@ def add_local_time_margin(package: Path, action: str) -> dict | None:
     if action != "check":
         return None
     path = package / "config.json"
-    manifest = json.loads(path.read_text())
+    manifest = load_manifest(package)
     configured = int(manifest["limits"]["time"])
     local = (
         configured * LOCAL_TIME_LIMIT_NUMERATOR + LOCAL_TIME_LIMIT_DENOMINATOR - 1
@@ -147,6 +153,7 @@ def add_local_time_margin(package: Path, action: str) -> dict | None:
 
 
 def native_action(config: ProjectConfig, action: str = "check") -> dict:
+    checked_tree(config.package_dir)
     folder = config.package_dir / "verification"
     folder.mkdir(parents=True, exist_ok=True)
     result_path = folder / f"solve-{action}.json"
@@ -160,7 +167,7 @@ def native_action(config: ProjectConfig, action: str = "check") -> dict:
         write_json(result_path, result)
         return result
     from .solve4 import source_extension
-    manifest = json.loads((config.package_dir / "config.json").read_text())
+    manifest = load_manifest(config.package_dir)
     groups = [group for group in manifest.get("test_groups", []) if not group.get("is_sample")]
     assignments = {}
     for item in config.subtasks:
@@ -212,11 +219,12 @@ def native_validate(config: ProjectConfig) -> tuple[bool | None, str]:
 def archive_package(config: ProjectConfig) -> Path:
     """Export a complete package; keep fixed outputs so CLI upload cannot remove them."""
     root = config.package_dir
-    destination = root.parent / (config.codename + ".zip")
+    destination = checked_path(root.parent / (config.codename + ".zip"))
+    checked_path(destination.with_suffix(".zip.sha256"))
     with tempfile.TemporaryDirectory(prefix="packer-export-") as temporary:
         work = Path(temporary) / config.codename
         copy_package(root, work)
-        manifest = json.loads((work / "config.json").read_text())
+        manifest = load_manifest(work)
         if manifest["type"] != "solve-interactive":
             for group in manifest["test_groups"]:
                 for test in group["tests"]:

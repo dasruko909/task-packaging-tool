@@ -7,7 +7,8 @@ import shutil
 import time
 from pathlib import Path
 
-from .storage import atomic_write_text, write_json
+from .storage import atomic_write_text, write_json, validate_state_identity
+from .paths import checked_path, checked_tree
 
 
 class RestartWorkflow(Exception):
@@ -97,7 +98,10 @@ def snapshot(store, key: str, text: str) -> None:
 
 def checkpoint(state, store, reason: str) -> Path:
     """Copy before any mutation; incomplete copies are not offered for restoration."""
-    path = store.path.parent / 'history' / 'checkpoints' / str(time.time_ns())
+    validate_state_identity(state, store.codename)
+    checked_tree(store.path.parent)
+    checked_tree(state.config.package_dir)
+    path = checked_path(store.path.parent / 'history' / 'checkpoints' / str(time.time_ns()))
     path.mkdir(parents=True)
     root = state.config.package_dir
     if root.exists():
@@ -114,6 +118,7 @@ def checkpoint(state, store, reason: str) -> Path:
 
 
 def _remove(path):
+    checked_tree(path)
     if path.is_symlink() or path.is_file():
         path.unlink()
     elif path.is_dir():
@@ -122,10 +127,12 @@ def _remove(path):
 
 def cleanup(state, store):
     """Idempotent cleanup; a crash is resumed before the next workflow action."""
+    validate_state_identity(state, store.codename)
+    checked_tree(store.path.parent)
     target = state.setup.get('pending_cleanup')
     if not target:
         return
-    root = state.config.package_dir
+    root = checked_tree(state.config.package_dir)
     broad = target in {'rules', 'task_type', 'specification', 'test_plan'}
     paths = [root / 'verification/certificate.json', root / 'verification/report.json',
              root / 'verification/report.md']
@@ -163,6 +170,8 @@ def cleanup(state, store):
                     ]
                     # Compatibility with files created by older packer versions.
                     paths += list((root / 'tests' / folder).glob(f'{state.config.codename}.{item.index:02d}m[0-9]*'))
+    for path in paths:
+        checked_tree(path)
     for path in paths:
         _remove(path)
     state.setup.pop('pending_cleanup', None)
@@ -234,6 +243,7 @@ def revise(state, store, target: str, feedback: str = '', *, reuse: bool = True,
 
 
 def history(store):
+    checked_tree(store.path.parent / "history")
     result = []
     for path in sorted((store.path.parent / 'history/checkpoints').glob('*')):
         if (path / 'checkpoint.json').is_file():
@@ -247,7 +257,9 @@ def restore(state, store, identifier: str):
     path = next((p for p in paths if p.name == identifier), None)
     if path is None:
         raise ValueError('No such version exists in history.')
+    checked_tree(path)
     restored = WorkflowState.from_dict(json.loads((path / 'state.json').read_text()))
+    validate_state_identity(restored, store.codename)
     if restored.config.codename != state.config.codename:
         raise ValueError('This history belongs to another project.')
     checkpoint(state, store, 'before restoring ' + identifier)
@@ -256,7 +268,7 @@ def restore(state, store, identifier: str):
     restored.completed = [key for key in restored.completed if key != 'finalize']
     restored.setup['pending_cleanup'] = 'outputs'
     root = state.config.package_dir
-    transaction = (store.path.parent / '.restore-work').resolve()
+    transaction = checked_tree(store.path.parent / '.restore-work').absolute()
     journal = store.path.parent / '.restore-transaction.json'
     if transaction.exists():
         shutil.rmtree(transaction)

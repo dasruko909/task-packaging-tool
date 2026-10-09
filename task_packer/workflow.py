@@ -56,7 +56,9 @@ from .preview import Preview
 from .review import Review
 from .test_generation import TestGeneration
 from .solutions import Solutions
-from .registry import solution_path, load_manifest
+from .registry import solution_path, load_manifest, safe_file
+from .paths import checked_tree
+from .storage import validate_state_identity
 
 
 JsonValidator = Callable[[dict[str, Any]], Any]
@@ -69,6 +71,9 @@ class Workflow(ContentReview, Preview, Review, TestGeneration, Solutions):
     def __init__(self, state: WorkflowState, store: StateStore, openai: OpenAIClient):
         if state.config is None:
             raise ValueError("The project state has no configuration.")
+        validate_state_identity(state, store.codename)
+        checked_tree(state.config.package_dir)
+        checked_tree(store.path.parent)
         self.state = state
         self.store = store
         self.openai = openai
@@ -158,7 +163,7 @@ class Workflow(ContentReview, Preview, Review, TestGeneration, Solutions):
         if self.config.input_package:
             path = Path(self.config.input_package) / "config.json"
             if path.is_file():
-                metadata = json.loads(path.read_text(encoding="utf-8"))
+                metadata = load_manifest(Path(self.config.input_package))
         system, user = task_type_prompt(self.config, metadata)
         def validate(data):
             if require_string(data, "task_type") not in {"standard", "multiple", "interactive"}:
@@ -468,7 +473,7 @@ class Workflow(ContentReview, Preview, Review, TestGeneration, Solutions):
             mutants = data.get('mutants', [])
             write_json(directory / 'mutants.json', mutants)
             for mutant in mutants:
-                atomic_write_text(directory / 'mutants' / mutant['name'], mutant['code'])
+                atomic_write_text(safe_file(directory / 'mutants', mutant['name']), mutant['code'])
             if data.get('reducer'):
                 atomic_write_text(directory / 'reducer.cpp', require_string(data, 'reducer'))
             if self.config.task_type == "interactive":
@@ -565,7 +570,7 @@ class Workflow(ContentReview, Preview, Review, TestGeneration, Solutions):
             None,
         )
         if registered and registered.get("output") and sample_index is None:
-            output = self.config.package_dir / "tests/out" / registered["output"]
+            output = safe_file(self.config.package_dir / "tests/out", registered["output"])
             if output.is_file():
                 raise RuntimeError(
                     f"The validator rejects test {source.name}, but the test has approved output "
@@ -640,7 +645,7 @@ class Workflow(ContentReview, Preview, Review, TestGeneration, Solutions):
                     self.config.test_plan, ensure_ascii=False
                 )
                 if registered and registered.get("output"):
-                    (self.config.package_dir / "tests/out" / registered["output"]).unlink(missing_ok=True)
+                    safe_file(self.config.package_dir / "tests/out", registered["output"]).unlink(missing_ok=True)
             elif accepted_data is not None:
                 tests = accepted_data.get("tests", [])
                 if 0 <= corner_index < len(tests):

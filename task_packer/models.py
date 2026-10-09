@@ -11,6 +11,8 @@ from pathlib import Path
 from types import UnionType
 from typing import Any, get_args, get_origin, get_type_hints
 
+from .paths import checked_path, project_code, language_code, relative_path
+
 
 def _validate(value: Any, expected: Any, location: str) -> None:
     """Check the JSON shape before constructing the persisted dataclasses."""
@@ -56,6 +58,36 @@ def _validate(value: Any, expected: Any, location: str) -> None:
             _validate(item, arguments[1], f"{location}.{key}")
 
 
+def validate_material_names(values: dict, location: str) -> None:
+    for field_name, field_type in {
+        'codename': str, 'language_code': str, 'input_package': str,
+        'image_files': list[str], 'image_placements': dict[str, str],
+        'solution_files': dict[str, str], 'sample_files': list[dict[str, str]],
+    }.items():
+        if field_name in values:
+            _validate(values[field_name], field_type, f'{location}.{field_name}')
+    code = values.get('codename')
+    if 'codename' in values:
+        project_code(code)
+    root = Path('output') / code if code else Path('.')
+    package = values.get('input_package')
+    if package and code:
+        source = checked_path(Path(package)).absolute()
+        source_root = checked_path(Path('input') / code).absolute()
+        if not source.is_relative_to(source_root):
+            raise ValueError(f'{location}.input_package {package!r} must be inside {source_root}.')
+    if 'language_code' in values:
+        values['language_code'] = language_code(values['language_code'])
+    for name in [*values.get('image_files', []), *values.get('image_placements', {})]:
+        relative_path(root / 'description', name, flat=True)
+    for name in values.get('solution_files', {}).values():
+        relative_path(root / 'solutions', name)
+    for sample in values.get('sample_files', []):
+        for field in ('input', 'output'):
+            if field in sample:
+                relative_path(root / 'tests' / ('in' if field == 'input' else 'out'), sample[field])
+
+
 @dataclass(slots=True)
 class Subtask:
     """One subtask and its share of the score."""
@@ -95,9 +127,19 @@ class ProjectConfig:
     solution_files: dict[str, str] = field(default_factory=dict)
     sample_files: list[dict[str, str]] = field(default_factory=list)
 
+    def __post_init__(self) -> None:
+        self.validate_paths()
+
+    def validate_paths(self) -> None:
+        values = asdict(self)
+        validate_material_names(values, 'config')
+        self.language_code = values['language_code']
+
     @property
     def package_dir(self) -> Path:
-        return Path("output") / self.codename
+        project_code(self.codename)
+        self.language_code = language_code(self.language_code)
+        return checked_path(Path("output") / self.codename)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ProjectConfig":
@@ -105,6 +147,7 @@ class ProjectConfig:
         if not data["subtasks"]:
             raise ValueError("config.subtasks: must contain at least one subtask")
         values = dict(data)
+        validate_material_names(values, "config")
         values["subtasks"] = [Subtask(**item) for item in data["subtasks"]]
         # Complete states saved before import and special-task support existed.
         values.setdefault("task_type", "standard")
@@ -169,7 +212,8 @@ class WorkflowState:
         values["config"] = ProjectConfig.from_dict(config) if config is not None else None
         # State files created by the first version had no ``setup`` field.
         # Filling it in here preserves backward compatibility.
-        values.setdefault("setup", {})
+        values["setup"] = dict(values.get("setup", {}))
+        validate_material_names(values["setup"], "state.setup")
         values.setdefault(
             "usage", {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0}
         )

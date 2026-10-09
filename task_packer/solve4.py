@@ -18,7 +18,8 @@ from .statement_format import (
     test_filename,
 )
 from .storage import atomic_write_text, write_json
-from .registry import load_manifest, records, bind_subtasks, solution_path
+from .registry import load_manifest, records, bind_subtasks, solution_path, safe_file, validate_manifest
+from .paths import checked_tree
 
 
 LANGUAGE_EXTENSIONS = {
@@ -115,7 +116,7 @@ def statement_validation_errors(
 def create_package_skeleton(config: ProjectConfig) -> None:
     """Create all standard directories without removing existing files."""
 
-    root = config.package_dir
+    root = checked_tree(config.package_dir)
     for relative in (
         "checker",
         "description",
@@ -161,6 +162,7 @@ def _test_names(
 def _migrate_generated_test_names(config: ProjectConfig, manifest: dict) -> None:
     """Migrate legacy packer tests to the 0a.in/1a.in scheme without changing imports."""
 
+    validate_manifest(config.package_dir, manifest)
     groups = manifest.get("test_groups")
     if config.existing_tests or not isinstance(groups, list) or not groups:
         return
@@ -437,7 +439,7 @@ def write_package_metadata(
 ) -> None:
     """Refresh the manifest, package documentation, and helper CLI commands."""
 
-    root = config.package_dir
+    root = checked_tree(config.package_dir)
     manifest = build_config(config)
     from .solve_native import install_standard_checker
     if manifest["checker"]["standard"]:
@@ -445,6 +447,7 @@ def write_package_metadata(
     header = root / "public/solve_dlazaw.hpp"
     if header.is_file():
         shutil.copy2(header, root / "solutions/solve_dlazaw.hpp")
+    validate_manifest(root, manifest)
     write_json(root / "config.json", manifest)
 
     subtask_rows = "\n".join(
@@ -516,7 +519,7 @@ PYTHONPATH="$PWD/packer_tools" python3 -m task_packer.portable "$PWD" "$@"
 """
     portable_dir = root / 'packer_tools/task_packer'
     portable_dir.mkdir(parents=True, exist_ok=True)
-    for name in ('__init__.py', 'sandbox.py', 'portable.py'):
+    for name in ('__init__.py', 'sandbox.py', 'portable.py', 'paths.py', 'registry.py'):
         shutil.copy2(Path(__file__).parent / name, portable_dir / name)
     atomic_write_text(root / "check_with_solve.sh", commands)
     (root / "check_with_solve.sh").chmod(0o755)
@@ -525,7 +528,7 @@ PYTHONPATH="$PWD/packer_tools" python3 -m task_packer.portable "$PWD" "$@"
 def local_validation(config: ProjectConfig) -> list[str]:
     """Return problems detectable without a Solve CLI installation."""
 
-    root = config.package_dir
+    root = checked_tree(config.package_dir)
     required = [
         root / "config.json",
         root / "description" / f"{config.language_code}.md",
@@ -548,8 +551,8 @@ def local_validation(config: ProjectConfig) -> list[str]:
         if config.task_type != "interactive":
             for input_name, output_name, _ in example_references(markdown):
                 for folder, name in (("in", input_name), ("out", output_name)):
-                    path = root / "tests" / folder / name
-                    if not name or Path(name).name != name or not path.is_file():
+                    path = safe_file(root / "tests" / folder, name)
+                    if not path.is_file():
                         errors.append(f"Missing example file tests/{folder}/{name}.")
                     elif path.stat().st_size > EXAMPLE_FILE_MAX_BYTES:
                         errors.append(f"Example tests/{folder}/{name} exceeds 2048 bytes; the CLI will omit it when compiling the statement.")
@@ -573,7 +576,7 @@ def local_validation(config: ProjectConfig) -> list[str]:
             if "flush" not in code:
                 errors.append("The interactor does not explicitly flush responses.")
     try:
-        manifest = json.loads((root / "config.json").read_text(encoding="utf-8"))
+        manifest = load_manifest(root)
         registry = records(manifest)
         if statement_path.is_file() and config.task_type != 'interactive':
             registered = {(test.input, test.output) for test in registry}

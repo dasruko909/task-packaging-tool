@@ -72,6 +72,11 @@ The program then lets you use, edit, extend, replace, or save the draft. You can
 
 For a project code `bikes`, put source materials in `input/bikes/`.
 
+Project codes use 1–20 ASCII lowercase letters, digits, `-` or `_`. Statement languages are `pl` and `en` (case and surrounding spaces are normalized). Creating a project refuses any existing state, output directory, ZIP or ZIP checksum, including conflicts detected after taking the project lock. Prefilled input remains valid.
+
+Package file references must stay inside their assigned directories; relative subdirectories for programs and dependencies are supported. Symlinks in project paths, package contents and locks are rejected. Explicitly chosen source documents and files for manual import may remain outside the project. These checks do not make imports/exports transactional or protect against another process replacing filesystem components during an operation.
+
+
 - PDF statement: `input/bikes/statement.pdf`
 - Images: `input/bikes/images/`
 - Existing package: `input/bikes/package/`

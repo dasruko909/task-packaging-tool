@@ -5,14 +5,48 @@ import json
 from pathlib import Path
 from dataclasses import dataclass
 
+from .paths import relative_path, checked_tree
+
 
 def safe_file(root: Path, name: str) -> Path:
-    if not isinstance(name, str) or not name or Path(name).name != name or name in {'.', '..'}:
-        raise ValueError(f"Invalid file name: {name!r}")
-    path = root / name
-    if path.is_symlink():
-        raise ValueError(f"Symlink found where a file is required: {path}")
-    return path
+    return relative_path(root, name)
+
+
+def validate_manifest(root: Path, data: dict) -> None:
+    """Validate all file references before any consumer reads or writes them."""
+    if not isinstance(data, dict):
+        raise ValueError(f'{root / "config.json"}: manifest must be a JSON object.')
+    try:
+        for key, folder in (('checker', 'checker'), ('solutions', 'solutions'),
+                            ('generators', 'generators')):
+            programs = [data[key]] if key == 'checker' and data.get(key) else data.get(key, [])
+            for program in programs:
+                safe_file(root / folder, program['name'])
+                # libsolve prefixes the full name when preparing programs.
+                safe_file(root / folder, 'prepared_' + program['name'])
+                for name in program.get('additional_files_names', []):
+                    safe_file(root / folder, name)
+        for group in data.get('test_groups', []):
+            for test in group.get('tests', []):
+                safe_file(root / 'tests/in', test['input'])
+                safe_file(root / 'tests/out', output_name(test))
+        for key in ('test_generation', 'test_generations'):
+            for generation in data.get(key, []):
+                safe_file(root / 'generators', generation['generator'])
+                names = generation['filename']
+                for name in names if isinstance(names, list) else [names]:
+                    safe_file(root / 'tests/in', name)
+        for key, folder in (('descriptions', 'description'), ('editorials', 'editorial')):
+            for language, name in data.get(key, {}).items():
+                relative_path(root / folder, language, flat=True)
+                safe_file(root / folder, name)
+        # libsolve also constructs statement paths from title/default_language.
+        for language in data.get('title', {}):
+            relative_path(root / 'description', language, flat=True)
+        if data.get('default_language'):
+            relative_path(root / 'description', data['default_language'], flat=True)
+    except (KeyError, TypeError, AttributeError, ValueError) as error:
+        raise ValueError(f'{root / "config.json"}: {error}') from error
 
 
 def output_name(test: dict) -> str:
@@ -47,12 +81,12 @@ def records(manifest: dict) -> list[TestRecord]:
 
 
 def load_manifest(root: Path) -> dict:
-    path = root / 'config.json'
+    checked_tree(root)
+    path = safe_file(root, 'config.json')
     if not path.exists():
         return {}
     data = json.loads(path.read_text(encoding='utf-8'))
-    if not isinstance(data, dict):
-        raise ValueError('Manifest musi byc obiektem JSON.')
+    validate_manifest(root, data)
     return data
 
 

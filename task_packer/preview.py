@@ -4,6 +4,7 @@ import json
 import os
 import re
 from pathlib import Path
+from .registry import safe_file
 from typing import Any
 from urllib.parse import quote
 from .storage import atomic_write_text
@@ -66,7 +67,7 @@ class Preview:
 
     def _write_code_preview(self, stem: str, filename: str, code: str) -> Path:
         directory = self.store.path.parent / "previews" / self._slug(stem)
-        path = directory / filename
+        path = safe_file(directory, filename)
         atomic_write_text(path, code.rstrip() + "\n")
         return path
 
@@ -144,7 +145,7 @@ class Preview:
                 value = test.get(field) if not preserve_samples else None
                 if value is None and name and Path(name).name == name:
                     try:
-                        value = (self.config.package_dir / "tests" / folder / name).read_text(encoding="utf-8")
+                        value = safe_file(self.config.package_dir / "tests" / folder, name).read_text(encoding="utf-8")
                     except (OSError, UnicodeError):
                         pass
                 parts.extend([f"**{label}**", ""])
