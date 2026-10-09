@@ -3,11 +3,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import shutil
-import sys
 
 
 def isolated(command: list[str], *, work: Path, readable=(), env: dict | None = None,
-             cwd: Path | None = None) -> list[str]:
+             cwd: Path | None = None, writable_work: bool = True, writable=()) -> list[str]:
     binary = shutil.which('bwrap')
     if binary is None:
         raise RuntimeError('bubblewrap (bwrap) is missing. Install the bubblewrap package; execution without isolation is disabled.')
@@ -25,21 +24,19 @@ def isolated(command: list[str], *, work: Path, readable=(), env: dict | None = 
         mounts.append(cache)
     if Path('/etc/alternatives').is_dir():
         mounts.append(Path('/etc/alternatives'))
-    # The virtualenv contains runtime dependencies, never account credentials.
-    if sys.prefix != sys.base_prefix:
-        mounts.append(Path(sys.prefix))
-    for folder in ('bin', 'lib', 'lib64', 'include'):
-        path = Path(sys.base_prefix) / folder
-        if path.exists() and not str(path).startswith('/usr/'):
-            mounts.append(path)
     mounts.extend(Path(p).absolute() for p in readable if Path(p).exists())
     work = work.resolve()
     cwd = (cwd or work).resolve()
-    if not cwd.is_relative_to(work):
-        raise ValueError(f'Sandbox working directory must be inside {work}: {cwd}')
+    writable = [Path(path).resolve() for path in writable if Path(path).exists()]
+    visible = [work, *mounts, *writable]
+    if not any(cwd == path or (path.is_dir() and cwd.is_relative_to(path)) for path in visible):
+        raise ValueError(f'Sandbox working directory is not mounted: {cwd}')
     for path in sorted(set(mounts), key=lambda p: (len(p.parts), str(p))):
         args += ['--ro-bind', str(path), str(path)]
-    args += ['--bind', str(work), str(work), '--chdir', str(cwd)]
+    args += ['--bind' if writable_work else '--ro-bind', str(work), str(work)]
+    for path in sorted(set(writable), key=lambda p: (len(p.parts), str(p))):
+        args += ['--bind', str(path), str(path)]
+    args += ['--chdir', str(cwd)]
     values = {'PATH': os.defpath, 'LANG': 'C.UTF-8', 'HOME': '/tmp', 'TMPDIR': '/tmp'}
     values.update(env or {})
     for key, value in values.items():

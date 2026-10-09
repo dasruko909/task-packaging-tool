@@ -88,6 +88,7 @@ def doctor() -> dict:
                 probe = isolated(
                     [str(runtime_python()), "-c", "print('sandbox-ok')"],
                     work=work,
+                    readable=[runtime_python().parent.parent],
                 )
                 result = subprocess.run(
                     probe, cwd=work, capture_output=True, text=True, timeout=15,

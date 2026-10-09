@@ -482,6 +482,7 @@ class TestDataWhitespaceTests(unittest.TestCase):
 
         def program(source, **kwargs):
             paths = kwargs["args"]
+            self.assertEqual(kwargs["readable"], [Path(path) for path in paths])
             self.assertEqual(Path(paths[0]).read_bytes(), input_data.encode())
             self.assertEqual(Path(paths[1]).read_bytes(), reference.encode())
             self.assertEqual(Path(paths[2]).read_bytes(), candidate.encode())
