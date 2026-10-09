@@ -9,6 +9,8 @@ import tempfile
 import hashlib
 
 from .storage import write_json
+from .paths import project_code
+from .registry import load_manifest
 from .solve_native import LOCAL_WALL_TIME_FACTOR
 
 
@@ -33,6 +35,8 @@ def install_local_wall_time_margin() -> None:
 
 
 def execute(action: str, code: str, path: Path, assignments: dict) -> dict:
+    project_code(code)
+    load_manifest(path)
     install_local_wall_time_margin()
     from libsolve.package import Package
     from libsolve.package.test_runner import TestRunner

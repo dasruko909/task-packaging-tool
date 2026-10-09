@@ -2,10 +2,12 @@
 import hashlib
 import json
 from pathlib import Path
+from .paths import checked_tree, checked_path
 from .storage import write_json
 
 
 def fingerprints(root: Path) -> dict[str, str]:
+    checked_tree(root)
     paths = [root / 'config.json']
     for folder in ('description', 'editorial', 'solutions', 'generators', 'checker', 'public', 'tests', 'validators'):
         paths.extend((root / folder).rglob('*'))
@@ -31,14 +33,14 @@ def certify(config, *, native: bool, local: bool = True) -> None:
         'sha256': fingerprints(config.package_dir), 'local': local,
         'native': native, 'task_type': config.task_type,
     }
-    native_result = config.package_dir / 'verification/solve-check.json'
+    native_result = checked_path(config.package_dir / 'verification/solve-check.json')
     if native and native_result.is_file():
         certificate['native_result_sha256'] = hashlib.sha256(native_result.read_bytes()).hexdigest()
     write_json(config.package_dir / 'verification/certificate.json', certificate)
 
 
 def changed_files(config) -> list[str]:
-    path = config.package_dir / 'verification/certificate.json'
+    path = checked_path(config.package_dir / 'verification/certificate.json')
     if not path.is_file():
         return ['no current verification certificate']
     try:
@@ -55,8 +57,8 @@ def certified_native_result(config) -> dict | None:
     """Return a successful Solve result only when its certificate is still exact."""
     if changed_files(config):
         return None
-    certificate_path = config.package_dir / 'verification/certificate.json'
-    result_path = config.package_dir / 'verification/solve-check.json'
+    certificate_path = checked_path(config.package_dir / 'verification/certificate.json')
+    result_path = checked_path(config.package_dir / 'verification/solve-check.json')
     try:
         certificate = json.loads(certificate_path.read_text())
         result_bytes = result_path.read_bytes()

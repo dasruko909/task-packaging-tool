@@ -9,6 +9,8 @@ from typing import Any
 
 from .models import ProjectConfig
 from .storage import atomic_write_text
+from .paths import checked_path, checked_tree, project_code, language_code as normalize_language
+from .registry import safe_file, load_manifest
 
 
 INPUT_ROOT = Path("input")
@@ -16,19 +18,19 @@ IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
 
 def input_dir(codename: str) -> Path:
-    return INPUT_ROOT / codename
+    return checked_path(INPUT_ROOT / project_code(codename))
 
 
 def package_drop_dir(codename: str) -> Path:
-    return input_dir(codename) / "package"
+    return checked_tree(input_dir(codename) / "package")
 
 
 def images_drop_dir(codename: str) -> Path:
-    return input_dir(codename) / "images"
+    return checked_tree(input_dir(codename) / "images")
 
 
 def pdf_drop_path(codename: str) -> Path:
-    return input_dir(codename) / "statement.pdf"
+    return checked_path(input_dir(codename) / "statement.pdf")
 
 
 def prepare_drop_zones(codename: str) -> None:
@@ -67,17 +69,18 @@ directory must contain config.json or the tests directory directly.
 def package_defaults(codename: str) -> dict[str, Any]:
     """Read safe defaults from an existing config.json."""
 
-    path = package_drop_dir(codename) / "config.json"
+    path = safe_file(package_drop_dir(codename), "config.json")
     if not path.is_file():
         return {}
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = load_manifest(package_drop_dir(codename))
     except (OSError, json.JSONDecodeError):
         return {}
     return data if isinstance(data, dict) else {}
 
 
 def find_package_statement(codename: str, language_code: str = "pl") -> Path | None:
+    language_code = normalize_language(language_code)
     preferred = package_drop_dir(codename) / "description" / f"{language_code}.md"
     if preferred.is_file():
         return preferred
@@ -121,10 +124,13 @@ def validate_pdf(path: Path) -> None:
 def _copy_tree_without_symlinks(source: Path, destination: Path) -> None:
     """Copy a package without executing or following symbolic links."""
 
+    checked_tree(source)
+    checked_tree(destination)
+    load_manifest(source)
     for path in sorted(source.rglob("*")):
         if path.is_symlink():
             raise RuntimeError(f"Unsafe symbolic link skipped in package: {path}")
-        target = destination / path.relative_to(source)
+        target = safe_file(destination, path.relative_to(source).as_posix())
         if path.is_dir():
             target.mkdir(parents=True, exist_ok=True)
         elif path.is_file():
@@ -135,19 +141,20 @@ def _copy_tree_without_symlinks(source: Path, destination: Path) -> None:
 def import_existing_materials(config: ProjectConfig) -> None:
     """Copy the package and images to the output directory once."""
 
+    config.validate_paths()
     if config.input_package:
         _copy_tree_without_symlinks(Path(config.input_package), config.package_dir)
 
-    destination = config.package_dir / "description"
+    destination = checked_tree(config.package_dir / "description")
     destination.mkdir(parents=True, exist_ok=True)
     for image_name in config.image_files:
-        source = images_drop_dir(config.codename) / image_name
+        source = safe_file(images_drop_dir(config.codename), image_name)
         if not source.is_file():
-            if (destination / image_name).is_file():
+            if safe_file(destination, image_name).is_file():
                 continue
             raise RuntimeError(f"Saved image is missing: {source}")
-        shutil.copy2(source, destination / source.name)
-    from .registry import load_manifest, bind_subtasks, safe_file
+        shutil.copy2(source, safe_file(destination, image_name))
+    from .registry import bind_subtasks
     manifest = load_manifest(config.package_dir)
     if manifest.get('test_groups'):
         bind_subtasks(config, manifest['test_groups'])
@@ -159,7 +166,7 @@ def import_existing_materials(config: ProjectConfig) -> None:
         if types == 'model' or isinstance(types, list) and 'model' in types:
             path = safe_file(config.package_dir / 'solutions', solution['name'])
             if path.is_file():
-                config.solution_files.setdefault(str(config.subtasks[-1].index), path.name)
+                config.solution_files.setdefault(str(config.subtasks[-1].index), solution['name'])
                 break
     summary = {
         'descriptions': sorted(p.name for p in destination.iterdir() if p.is_file()),
@@ -177,16 +184,17 @@ def import_existing_materials(config: ProjectConfig) -> None:
 def statement_attachments(config: ProjectConfig) -> list[Path]:
     """Visual materials sent to the model for task-type detection and statement drafting."""
 
+    config.validate_paths()
     attachments: list[Path] = []
     if config.statement_pdf:
         attachments.append(Path(config.statement_pdf))
     for name in config.image_files:
-        candidates = [config.package_dir / 'description' / name, images_drop_dir(config.codename) / name]
+        candidates = [safe_file(config.package_dir / 'description', name), safe_file(images_drop_dir(config.codename), name)]
         if config.input_package:
-            candidates.append(Path(config.input_package) / 'description' / name)
-        attachments.append(next((path for path in candidates if path.is_file()), images_drop_dir(config.codename) / name))
+            candidates.append(safe_file(Path(config.input_package) / 'description', name))
+        attachments.append(next((path for path in candidates if path.is_file()), safe_file(images_drop_dir(config.codename), name)))
     if config.input_package:
-        for path in sorted((Path(config.input_package) / 'description').glob('*')):
+        for path in sorted(checked_tree(Path(config.input_package) / 'description').glob('*')):
             if path.is_file() and not path.is_symlink() and path.suffix.lower() in IMAGE_SUFFIXES and path.name not in {p.name for p in attachments}:
                 attachments.append(path)
     return attachments

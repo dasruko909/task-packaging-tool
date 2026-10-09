@@ -14,7 +14,8 @@ from .costs import MAX_PROJECT_COST_USD, MODEL_PRICES
 from .models import ProjectConfig
 from .solve4 import source_extension
 from .storage import atomic_write_text, write_json
-from .registry import records, solution_path, safe_file
+from .registry import records, solution_path, safe_file, load_manifest
+from .paths import checked_tree, checked_path
 from .freshness import fingerprints
 
 
@@ -53,13 +54,14 @@ class Verification:
     def __init__(self, config: ProjectConfig, regenerate_outputs: bool = False,
                  usage: dict[str, float | int] | None = None):
         self.config = config
-        self.root = config.package_dir.resolve()
+        self.root = checked_tree(config.package_dir).resolve()
         self.checks: list[dict[str, str]] = []
         self.regenerate_outputs = regenerate_outputs
         self.usage = dict(usage or {})
 
     @staticmethod
     def _read_json(path: Path, default: Any) -> Any:
+        checked_path(path)
         try:
             return json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError, TypeError):
@@ -406,7 +408,7 @@ class Verification:
         bundle = self.root / "verification"
         with tempfile.TemporaryDirectory(prefix="packer-check-") as temporary:
             runner = Runner(Path(temporary), self.root / "public")
-            manifest = json.loads((self.root / "config.json").read_text())
+            manifest = load_manifest(self.root)
             registry = records(manifest)
             validator = verification_program(self.root / 'validators', 'input_validator')
             if not validator.is_file():
@@ -490,7 +492,7 @@ class Verification:
                     validate_input(case['input'])
                     test = runner.directory / "interaction-input.txt"
                     test.write_text(case["input"])
-                    verdict, timeout = runner.interaction(judge, bundle / case["client"], test,
+                    verdict, timeout = runner.interaction(judge, safe_file(bundle, case["client"]), test,
                                                          seconds=seconds + 2, memory_kb=config.memory_limit_kb)
                     # A silent client is stopped by the external supervisor, just as by a judge runner.
                     if case["kind"] == "silent" and timeout:

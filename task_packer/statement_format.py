@@ -30,7 +30,7 @@ def imported_examples(config: ProjectConfig) -> list[dict[str, str]]:
     pairs = [(test['input'], test['output']) for test in config.sample_files]
     if not pairs:
         pairs = [(i, o) for i, o, _ in example_references(config.original_statement)]
-    from .registry import load_manifest, records
+    from .registry import load_manifest, records, safe_file
     manifest = load_manifest(root)
     registry = records(manifest)
     if not pairs:
@@ -43,9 +43,7 @@ def imported_examples(config: ProjectConfig) -> list[dict[str, str]]:
                      for p in sorted((root / "tests/in").glob("*")) if p.is_file()]
     result = []
     for input_name, output_name in pairs:
-        paths = [root / "tests" / folder / name for folder, name in (("in", input_name), ("out", output_name))]
-        if any(not name or Path(name).name != name for name in (input_name, output_name)):
-            raise ValueError("Examples must reference test file names only.")
+        paths = [safe_file(root / "tests" / folder, name) for folder, name in (("in", input_name), ("out", output_name))]
         if any(not path.is_file() or path.stat().st_size > EXAMPLE_FILE_MAX_BYTES for path in paths):
             if designated:
                 raise ValueError(f"Example {input_name}/{output_name}: a file is missing or exceeds 2048 bytes.")
