@@ -6,7 +6,8 @@ import shutil
 import sys
 
 
-def isolated(command: list[str], *, work: Path, readable=(), env: dict | None = None) -> list[str]:
+def isolated(command: list[str], *, work: Path, readable=(), env: dict | None = None,
+             cwd: Path | None = None) -> list[str]:
     binary = shutil.which('bwrap')
     if binary is None:
         raise RuntimeError('bubblewrap (bwrap) is missing. Install the bubblewrap package; execution without isolation is disabled.')
@@ -33,9 +34,12 @@ def isolated(command: list[str], *, work: Path, readable=(), env: dict | None = 
             mounts.append(path)
     mounts.extend(Path(p).absolute() for p in readable if Path(p).exists())
     work = work.resolve()
+    cwd = (cwd or work).resolve()
+    if not cwd.is_relative_to(work):
+        raise ValueError(f'Sandbox working directory must be inside {work}: {cwd}')
     for path in sorted(set(mounts), key=lambda p: (len(p.parts), str(p))):
         args += ['--ro-bind', str(path), str(path)]
-    args += ['--bind', str(work), str(work), '--chdir', str(work)]
+    args += ['--bind', str(work), str(work), '--chdir', str(cwd)]
     values = {'PATH': os.defpath, 'LANG': 'C.UTF-8', 'HOME': '/tmp', 'TMPDIR': '/tmp'}
     values.update(env or {})
     for key, value in values.items():
