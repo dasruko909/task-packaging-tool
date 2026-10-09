@@ -6,14 +6,45 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import tempfile
 import unittest
 
 from task_packer.execution import Runner
+from task_packer.sandbox import isolated
+from task_packer.solve_native import runtime_mounts, runtime_python
 
 
 @unittest.skipUnless(shutil.which("bwrap"), "bubblewrap is required")
 class SandboxIsolationTests(unittest.TestCase):
+    def test_native_runtime_hides_unrelated_virtualenv_root_files(self) -> None:
+        runtime_root = runtime_python().parent.parent
+        if not (runtime_root / "pyvenv.cfg").is_file():
+            self.skipTest("native Solve does not use a virtual environment")
+        sentinel = runtime_root / "sandbox-root-sentinel"
+        self.assertFalse(sentinel.exists())
+        sentinel.write_text("synthetic secret", encoding="utf-8")
+        try:
+            with tempfile.TemporaryDirectory() as temporary:
+                work = Path(temporary)
+                code = (
+                    "import sys; from pathlib import Path; "
+                    "from libsolve.package import Package; "
+                    "print('visible' if Path(sys.argv[1]).exists() else 'hidden')"
+                )
+                command = isolated(
+                    [str(runtime_python()), "-c", code, str(sentinel)],
+                    work=work, readable=runtime_mounts(),
+                )
+                result = subprocess.run(
+                    command, cwd=work, capture_output=True, text=True, timeout=15,
+                    env={"PATH": os.defpath, "LANG": "C.UTF-8"},
+                )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), "hidden")
+        finally:
+            sentinel.unlink(missing_ok=True)
+
     def test_program_cannot_reach_host_siblings_secrets_environment_or_network(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

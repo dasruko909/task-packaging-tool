@@ -62,6 +62,16 @@ def runtime_python() -> Path:
     return local if local.is_file() else Path(sys.executable)
 
 
+def runtime_mounts() -> list[Path]:
+    """Expose only the interpreter portions of a virtual environment."""
+    root = runtime_python().parent.parent
+    if root == Path(sys.base_prefix):
+        return []
+    return [path for path in (
+        root / "pyvenv.cfg", root / "bin", root / "lib", root / "lib64"
+    ) if path.exists()]
+
+
 def environment() -> dict[str, str]:
     env = {"LANG": "C.UTF-8", "PATH": os.environ.get("PATH", os.defpath)}
     env["PATH"] = str(runtime_python().parent) + os.pathsep + env.get("PATH", os.defpath)
@@ -88,7 +98,7 @@ def doctor() -> dict:
                 probe = isolated(
                     [str(runtime_python()), "-c", "print('sandbox-ok')"],
                     work=work,
-                    readable=[runtime_python().parent.parent],
+                    readable=runtime_mounts(),
                 )
                 result = subprocess.run(
                     probe, cwd=work, capture_output=True, text=True, timeout=15,
@@ -192,7 +202,10 @@ def native_action(config: ProjectConfig, action: str = "check") -> dict:
         with log.open("w") as stream:
             env = environment()
             env['PYTHONPATH'] = str(ROOT)
-            command = isolated(command, work=work, readable=[ROOT / 'task_packer', WHEELS, runtime_python().parent.parent], env=env)
+            command = isolated(
+                command, work=work,
+                readable=[ROOT / 'task_packer', WHEELS, *runtime_mounts()], env=env,
+            )
             process = subprocess.Popen(command, cwd=ROOT, env=environment(), stdout=stream,
                                        stderr=subprocess.STDOUT, start_new_session=True)
             try:
