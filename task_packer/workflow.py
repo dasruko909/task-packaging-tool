@@ -12,7 +12,7 @@ from .console import SavedExit, ask_multiline, choose, heading
 from .input_sources import import_existing_materials, statement_attachments
 from .models import Subtask, WorkflowState
 from .openai_client import OpenAIClient
-from .parsing import ModelFormatError, parse_json_object, require_string, require_test_list
+from .parsing import ModelFormatError, parse_json_object, require_string, require_test_list, require_text
 from .prompts import (
     checker_prompt,
     corner_prompt,
@@ -35,7 +35,7 @@ from .solve4 import (
     statement_validation_errors,
     write_package_metadata,
 )
-from .storage import StateStore, atomic_write_text, write_json
+from .storage import StateStore, atomic_write_text, read_text_exact, write_json
 from .execution import ExecutionError
 from .verification import Verification
 from .statement_format import (
@@ -246,10 +246,11 @@ class Workflow(ContentReview, Preview, Review, TestGeneration, Solutions):
         def validate(data: dict[str, Any]) -> None:
             markdown = format_subtasks(require_string(data, "statement_markdown"), self.config)
             tests = require_test_list(data, minimum=0 if preserve_samples else (1 if self.config.task_type == "interactive" else 2))
+            data["tests"] = tests
             if preserve_samples and tests:
                 raise ModelFormatError("For existing files, return tests: []; examples must use only tests/in and tests/out.")
-            if self.config.task_type != "interactive" and any(not test.get("output", "").strip() for test in tests):
-                raise ModelFormatError("Every standard example must have a non-empty 'output' field.")
+            if self.config.task_type != "interactive" and any("output" not in test for test in tests):
+                raise ModelFormatError("Every standard example must include an 'output' field.")
             if not preserve_samples and self.config.task_type != "interactive":
                 size_errors = example_size_errors(tests)
                 if size_errors:
@@ -259,16 +260,15 @@ class Workflow(ContentReview, Preview, Review, TestGeneration, Solutions):
                     raise ModelFormatError("The statement must use every planned example.")
                 for expected, actual in zip(planned_tests, tests):
                     if (
-                        expected.get("input", "").strip() != actual.get("input", "").strip()
-                        or expected.get("output", "").strip() != actual.get("output", "").strip()
+                        expected.get("input") != actual.get("input")
+                        or expected.get("output") != actual.get("output")
                     ):
                         raise ModelFormatError("Statement examples do not match the planned tests.")
                 descriptions = [
                     str(actual.get("description", "")).strip() or str(expected.get("description", "")).strip()
                     for expected, actual in zip(planned_tests, tests)
                 ]
-                # Preview and file writes must use the same planned data,
-                # even if the model changed whitespace at the edges of text.
+                # Preview and file writes use the exact approved planned data.
                 data["tests"] = [dict(expected, description=description)
                                  for expected, description in zip(planned_tests, descriptions)]
             else:
@@ -343,9 +343,9 @@ class Workflow(ContentReview, Preview, Review, TestGeneration, Solutions):
             notes = ["# Sample tests", ""]
             for index, test in enumerate(tests):
                 name, output_name = sample_pairs(self.config, len(tests))[index]
-                atomic_write_text(root / "tests" / "in" / name, test["input"] + "\n")
+                atomic_write_text(root / "tests" / "in" / name, test["input"])
                 if "output" in test:
-                    atomic_write_text(root / "tests" / "out" / output_name, test["output"] + "\n")
+                    atomic_write_text(root / "tests" / "out" / output_name, test["output"])
                 notes.extend([f"## {name}", "", test["description"], ""])
             atomic_write_text(self.store.path.parent / "notes" / "samples.md", "\n".join(notes))
 
@@ -624,18 +624,18 @@ class Workflow(ContentReview, Preview, Review, TestGeneration, Solutions):
             f"Task statement:\n{self._statement_text()}\n\n"
             f"Subtask: {subtask_index if subtask_index >= 0 else 'unknown'}\n"
             f"Test purpose: {description}\n\n"
-            f"Invalid input:\n{source.read_text()}\n\n"
+            f"Invalid input:\n{read_text_exact(source)}\n\n"
             f"Validator diagnosis:\n{error}"
         )
 
         def validate(data: dict[str, Any]) -> None:
-            require_string(data, "input")
+            require_text(data, "input")
             require_string(data, "description")
 
         def accept(data: dict[str, Any]) -> None:
             from .revisions import snapshot
-            snapshot(self.store, f"test-{source.name}", source.read_text())
-            repaired = require_string(data, "input") + "\n"
+            snapshot(self.store, f"test-{source.name}", read_text_exact(source))
+            repaired = require_text(data, "input")
             atomic_write_text(source, repaired)
             repaired_description = require_string(data, "description")
             if sample_index is not None:

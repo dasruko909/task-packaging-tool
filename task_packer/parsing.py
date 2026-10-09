@@ -70,12 +70,20 @@ def parse_json_object(text: str) -> dict[str, Any]:
 
 
 def require_string(data: dict[str, Any], key: str) -> str:
-    if not isinstance(data, dict):
-        raise ModelFormatError(f"Expected an object containing field {key!r}.")
-    value = data.get(key)
-    if not isinstance(value, str) or not value.strip():
+    value = require_text(data, key)
+    if not value.strip():
         raise ModelFormatError(f"Field {key!r} must be non-empty text.")
     return value.strip()
+
+
+def require_text(data: dict[str, Any], key: str) -> str:
+    """Return a required text field without changing its contents."""
+
+    if not isinstance(data, dict):
+        raise ModelFormatError(f"Expected an object containing field {key!r}.")
+    if key not in data or not isinstance(data[key], str):
+        raise ModelFormatError(f"Field {key!r} must be text.")
+    return data[key]
 
 
 def require_test_list(data: dict[str, Any], minimum: int = 1) -> list[dict[str, str]]:
@@ -87,13 +95,13 @@ def require_test_list(data: dict[str, Any], minimum: int = 1) -> list[dict[str, 
         if not isinstance(value, dict):
             raise ModelFormatError(f"Test {index} is not an object.")
         item = {
-            "input": require_string(value, "input"),
+            "input": require_text(value, "input"),
             "description": require_string(value, "description"),
         }
-        output = value.get("output")
-        if output is not None:
+        if "output" in value:
+            output = value["output"]
             if not isinstance(output, str):
                 raise ModelFormatError(f"Output of test {index} is not text.")
-            item["output"] = output.strip()
+            item["output"] = output
         result.append(item)
     return result

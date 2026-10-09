@@ -5,6 +5,7 @@ import re
 import json
 from pathlib import Path
 from .models import ProjectConfig
+from .storage import read_text_exact
 
 
 EXAMPLES = re.compile(r'^```[ \t]*\{\.example\s+([^}\n]+)\}[ \t]*\n(.*?)^```[ \t]*$', re.M | re.S)
@@ -16,11 +17,11 @@ MAX_TESTS_PER_SUBTASK = 26
 
 def example_size_errors(tests: list[dict[str, str]]) -> list[str]:
     return [
-        f"Example {index}, {field}: the file with its final newline exceeds "
+        f"Example {index}, {field}: the file exceeds "
         f"{EXAMPLE_FILE_MAX_BYTES} bytes and will not be sent by Solve CLI for statement compilation."
         for index, test in enumerate(tests, 1)
         for field in ("input", "output")
-        if len((test.get(field, "") + "\n").encode("utf-8")) > EXAMPLE_FILE_MAX_BYTES
+        if len(test.get(field, "").encode("utf-8")) > EXAMPLE_FILE_MAX_BYTES
     ]
 
 
@@ -49,7 +50,7 @@ def imported_examples(config: ProjectConfig) -> list[dict[str, str]]:
                 raise ValueError(f"Example {input_name}/{output_name}: a file is missing or exceeds 2048 bytes.")
             continue
         result.append(dict(input_file=input_name, output_file=output_name,
-                           input=paths[0].read_text(encoding="utf-8"), output=paths[1].read_text(encoding="utf-8")))
+                           input=read_text_exact(paths[0]), output=read_text_exact(paths[1])))
         if not designated and len(result) == 3:
             break
     return result
