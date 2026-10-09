@@ -7,7 +7,7 @@ from pathlib import Path
 from .registry import safe_file
 from typing import Any
 from urllib.parse import quote
-from .storage import atomic_write_text
+from .storage import atomic_write_text, read_text_exact
 from .statement_format import sample_pairs, example_references, normalize_example_blocks
 
 
@@ -24,7 +24,7 @@ class Preview:
         fence = "`" * max(3, longest + 1)
         suffix = language.strip()
         opener = f"{fence}{suffix}" if suffix else fence
-        return f"{opener}\n{text.rstrip()}\n{fence}"
+        return f"{opener}\n{text}\n{fence}"
 
 
     @staticmethod
@@ -78,10 +78,10 @@ class Preview:
             if not isinstance(test, dict):
                 continue
             sections.extend([f"### Test {index}", "", "#### Input", ""])
-            sections.append(self._code_fence(str(test.get("input", "")).rstrip(), "text"))
+            sections.append(self._code_fence(str(test.get("input", "")), "text"))
             if "output" in test:
                 sections.extend(["", "#### Output", ""])
-                sections.append(self._code_fence(str(test.get("output", "")).rstrip(), "text"))
+                sections.append(self._code_fence(str(test.get("output", "")), "text"))
             description = str(test.get("description", "")).strip()
             if description:
                 sections.extend(["", "#### Description", "", description])
@@ -103,7 +103,7 @@ class Preview:
                 sections.append(f"- Description: {description}")
             for key in ("input", "reference", "candidate"):
                 if key in case:
-                    sections.extend(["", f"#### {key.capitalize()}", "", self._code_fence(str(case[key]).rstrip(), "text")])
+                    sections.extend(["", f"#### {key.capitalize()}", "", self._code_fence(str(case[key]), "text")])
             sections.append("")
         return "\n".join(sections).strip()
 
@@ -145,11 +145,11 @@ class Preview:
                 value = test.get(field) if not preserve_samples else None
                 if value is None and name and Path(name).name == name:
                     try:
-                        value = safe_file(self.config.package_dir / "tests" / folder, name).read_text(encoding="utf-8")
+                        value = read_text_exact(safe_file(self.config.package_dir / "tests" / folder, name))
                     except (OSError, UnicodeError):
                         pass
                 parts.extend([f"**{label}**", ""])
-                parts.append(self._code_fence(str(value).rstrip(), "text") if value is not None
+                parts.append(self._code_fence(str(value), "text") if value is not None
                              else f"Preview data for `{name}` is unavailable.")
                 parts.append("")
             explanation = explanation or str(test.get("description", "")).strip()

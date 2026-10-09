@@ -246,13 +246,14 @@ def audit_input(config, statement: str | None = None) -> str:
     from dataclasses import asdict
     from .registry import safe_file
     from .statement_format import example_references
+    from .storage import read_text_exact
     if statement is None:
         statement = (config.package_dir / 'description' / f'{config.language_code}.md').read_text()
     samples = []
     for inp, out, explanation in example_references(statement):
         samples.append({'input_file': inp, 'output_file': out, 'explanation': explanation,
-                        'input': safe_file(config.package_dir / 'tests/in', inp).read_text(),
-                        'output': safe_file(config.package_dir / 'tests/out', out).read_text()})
+                        'input': read_text_exact(safe_file(config.package_dir / 'tests/in', inp)),
+                        'output': read_text_exact(safe_file(config.package_dir / 'tests/out', out))})
     images = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in statement_attachments(config)}
     return json.dumps({'audit_version': AUDIT_VERSION,
                        'package_settings': {'task_type': config.task_type,

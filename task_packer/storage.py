@@ -111,6 +111,14 @@ def atomic_write_text(path: Path, content: str) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def read_text_exact(path: Path) -> str:
+    """Read UTF-8 text without universal-newline conversion."""
+
+    checked_path(path)
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        return handle.read()
+
+
 def write_json(path: Path, value: object) -> None:
     atomic_write_text(path, json.dumps(value, ensure_ascii=False, indent=2) + "\n")
 

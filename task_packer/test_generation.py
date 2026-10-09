@@ -48,6 +48,7 @@ class TestGeneration:
 
         def validate(data):
             tests = require_test_list(data, minimum=2)
+            data["tests"] = tests
             if len(tests) > MAX_TESTS_PER_SUBTASK:
                 raise ModelFormatError(
                     f"At most {MAX_TESTS_PER_SUBTASK} sample tests can be prepared."
@@ -163,6 +164,7 @@ class TestGeneration:
 
             def validate(data: dict[str, Any]) -> None:
                 tests = require_test_list(data, minimum=2 if counts is None else counts[1] or 1)
+                data["tests"] = tests
                 expected = counts[1] if counts is not None else None
                 if expected is not None and len(tests) != expected:
                     raise ModelFormatError(
@@ -181,7 +183,7 @@ class TestGeneration:
                     name = test_filename(item.index, generated_count + index - 1, "in")
                     atomic_write_text(
                         self.config.package_dir / "tests" / "in" / name,
-                        test["input"] + "\n",
+                        test["input"],
                     )
                     notes.extend([f"## {name}", "", test["description"], ""])
                 atomic_write_text(
