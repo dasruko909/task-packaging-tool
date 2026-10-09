@@ -53,7 +53,7 @@ class SubtaskDefaultsTests(unittest.TestCase):
                      time_limit_ms=2000, memory_limit_mb=256, subtask_mode='manual')
         setup.update(updates)
         state = WorkflowState(setup=setup)
-        store = Mock()
+        store = Mock(codename='synthetic')
         with contextlib.ExitStack() as stack:
             stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
             stack.enter_context(patch('task_packer.onboarding.prepare_drop_zones'))

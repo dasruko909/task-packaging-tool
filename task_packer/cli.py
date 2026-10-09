@@ -13,13 +13,14 @@ from .onboarding import gather_config
 from .openai_client import OpenAIClient
 from .storage import StateReadError, StateStore
 from .workflow import Workflow
+from .paths import project_code
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="A resumable Solve 4 package generator powered by OpenAI GPT."
     )
-    parser.add_argument("--project", help="project code to resume")
+    parser.add_argument("--project", type=project_code, help="project code to resume")
     parser.add_argument("--new", action="store_true", help="always create a new project")
     parser.add_argument("--status", action="store_true", help="show saved projects and exit")
     parser.add_argument("--task-type", choices=["auto", "standard", "multiple", "interactive"],
@@ -36,7 +37,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--doctor", action="store_true", help="check the Solve installation and compilers")
     parser.add_argument("--setup", action="store_true",
                         help="configure a private Solve connection once")
-    parser.add_argument("--download", metavar="CODE",
+    parser.add_argument("--download", metavar="CODE", type=project_code,
                         help="download an existing Solve task and open it as an editable project")
     parser.add_argument("--solve", choices=["check", "zip", "preview", "upload", "rejudge", "report", "connection"],
                         help="manage a package through Solve without OpenAI calls")

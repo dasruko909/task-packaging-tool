@@ -27,6 +27,8 @@ from .input_sources import (
     validate_package_drop,
     validate_pdf,
 )
+from .paths import project_code, language_code as normalize_language
+from .storage import ensure_new_project, validate_state_identity
 from .models import ProjectConfig, Subtask, WorkflowState
 from .parsing import ModelFormatError, parse_json_object, require_string
 from .storage import StateStore
@@ -132,10 +134,11 @@ def _detect_subtasks_with_ai(
 
 
 def _valid_codename(value: str) -> bool:
-    return bool(value) and value.isascii() and len(value) <= 20 and all(
-        character.islower() or character.isdigit() or character in "-_"
-        for character in value
-    )
+    try:
+        project_code(value)
+        return True
+    except ValueError:
+        return False
 
 
 def _config_default(data: dict[str, Any], key: str, fallback: Any) -> Any:
@@ -156,6 +159,19 @@ def gather_config(
     state = state or WorkflowState()
     setup = state.setup
 
+    if store is not None:
+        try:
+            validate_state_identity(state, store.codename)
+        except (ValueError, TypeError) as error:
+            raise ValueError(f"{store.path}: {error}") from error
+        if "codename" not in setup:
+            setup["codename"] = store.codename
+    if "language_code" in setup:
+        try:
+            setup["language_code"] = normalize_language(setup["language_code"])
+        except ValueError as error:
+            raise ValueError(f"{store.path if store else 'setup'}: {error}") from error
+
     if "codename" not in setup:
         while True:
             codename = ask(
@@ -165,15 +181,13 @@ def gather_config(
                 break
             print("The code must contain at most 20 characters and no spaces.")
         store = StateStore(codename)
-        if store.path.exists():
-            raise RuntimeError(
-                f"Project {codename!r} already exists. Use --project or a different code."
-            )
+        ensure_new_project(store)
         store.acquire_lock()
+        ensure_new_project(store)
         setup["codename"] = codename
         store.save(state)
     else:
-        codename = str(setup["codename"])
+        codename = project_code(setup["codename"])
         store = store or StateStore(codename)
         store.acquire_lock()
         print(f"Resuming saved configuration for project {codename!r}.")
@@ -218,7 +232,16 @@ def gather_config(
         save_value("existing_tests", package_has_tests(codename))
 
     imported = package_defaults(codename) if has_package else {}
-    language_code = saved_or_ask("language_code", "Statement language code", "pl")
+    if 'language_code' not in setup:
+        while True:
+            try:
+                selected_language = normalize_language(ask("Statement language code", "pl"))
+            except ValueError as error:
+                print(error)
+                continue
+            save_value('language_code', selected_language)
+            break
+    language_code = normalize_language(setup['language_code'])
 
     # Preserve a manual selection from older in-progress projects.
     task_type = str(setup.get("task_type", "auto"))
