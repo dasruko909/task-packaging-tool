@@ -102,6 +102,8 @@ class ProjectConfig:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ProjectConfig":
         _validate(data, cls, "config")
+        if not data["subtasks"]:
+            raise ValueError("config.subtasks: must contain at least one subtask")
         values = dict(data)
         values["subtasks"] = [Subtask(**item) for item in data["subtasks"]]
         # Complete states saved before import and special-task support existed.

@@ -21,9 +21,11 @@ class StateAdministrationTests(unittest.TestCase):
         os.chdir(self.temp.name)
         self.addCleanup(self.temp.cleanup)
         self.addCleanup(os.chdir, self.previous)
-        self.gather = self.enterContext(patch('task_packer.cli.gather_config'))
-        self.client = self.enterContext(patch('task_packer.cli.OpenAIClient'))
-        self.workflow = self.enterContext(patch('task_packer.cli.Workflow'))
+        stack = contextlib.ExitStack()
+        self.addCleanup(stack.close)
+        self.gather = stack.enter_context(patch('task_packer.cli.gather_config'))
+        self.client = stack.enter_context(patch('task_packer.cli.OpenAIClient'))
+        self.workflow = stack.enter_context(patch('task_packer.cli.Workflow'))
         acquire = StateStore.acquire_lock
 
         def acquire_for_test(store):
@@ -33,7 +35,7 @@ class StateAdministrationTests(unittest.TestCase):
             self.addCleanup(lock.close)
             return lock
 
-        self.enterContext(patch.object(StateStore, 'acquire_lock', acquire_for_test))
+        stack.enter_context(patch.object(StateStore, 'acquire_lock', acquire_for_test))
 
     def write_state(self, code, data):
         path = StateStore(code).path
@@ -79,6 +81,25 @@ class StateAdministrationTests(unittest.TestCase):
         with self.assertRaisesRegex(StateReadError, 'state.config.subtasks: missing required field'):
             StateStore('bad').load()
         self.assertEqual(json.loads(path.read_text()), data)
+
+    def test_empty_subtasks_rejected_without_rewriting_state(self):
+        data = self.configured()
+        data['config']['subtasks'] = []
+        path = self.write_state('bad', data)
+        before = path.read_bytes()
+        with self.assertRaisesRegex(StateReadError, 'config.subtasks: must contain at least one subtask'):
+            StateStore('bad').load()
+        out, err = self.run_cli('--status')
+        self.assertIn(str(path), out)
+        self.assertIn('requires repair', out)
+        self.assertIn('must contain at least one subtask', out)
+        self.assertEqual(err, '')
+        _, err = self.run_cli('--project', 'bad', exit_code=1)
+        self.assertIn(str(path), err)
+        self.assertIn('must contain at least one subtask', err)
+        self.assertNotIn('Traceback', err)
+        self.assertEqual(path.read_bytes(), before)
+        self.assert_no_generation()
 
     def test_malformed_json(self):
         path = self.write_state('bad', {})
