@@ -17,6 +17,39 @@ from task_packer.solve_native import runtime_mounts, runtime_python
 
 @unittest.skipUnless(shutil.which("bwrap"), "bubblewrap is required")
 class SandboxIsolationTests(unittest.TestCase):
+    def test_native_program_and_checker_have_private_file_views(self) -> None:
+        code = r'''
+import tempfile
+from pathlib import Path
+from task_packer.solve_worker import install_local_wall_time_margin
+from libsolve.package.program import Program
+from libsolve.execution import ExecutionStatus
+with tempfile.TemporaryDirectory() as temporary:
+ root = Path(temporary)
+ for name in ('solutions', 'checker', 'tests'):
+  (root / name).mkdir()
+ reference = root / 'tests/reference.txt'; reference.write_text('42')
+ sibling = root / 'solutions/sibling.cpp'; sibling.write_text('secret')
+ source = root / 'solutions/main.cpp'
+ source.write_text('#include <fstream>\n#include <iostream>\nint main(){std::ifstream a("'+str(reference)+'"), b("'+str(sibling)+'"); std::cout << ((!a && !b) ? 42 : 0);}')
+ checker = root / 'checker/check.cpp'
+ checker.write_text('#include <fstream>\n#include <iostream>\nint main(int n,char**v){int a,b;std::ifstream(v[1])>>a;std::ifstream(v[2])>>b;std::cout<<(a==b?100:0);}')
+ install_local_wall_time_margin(root / 'checker')
+ solution = Program(root / 'solutions','main.cpp','cpp17')
+ judge = Program(root / 'checker','check.cpp','cpp17')
+ solution.prepare(tmp_dir=root); judge.prepare(tmp_dir=root)
+ output = root / 'output'; verdict = root / 'verdict'
+ assert solution.run(stdout=output,time_limit=2000).status == ExecutionStatus.OK
+ assert output.read_text() == '42'
+ assert judge.run(params=[str(reference),str(output)],stdout=verdict,time_limit=2000).status == ExecutionStatus.OK
+ assert verdict.read_text() == '100'
+'''
+        result = subprocess.run(
+            [str(runtime_python()), '-c', code], capture_output=True, text=True,
+            timeout=30, env={"PATH": os.defpath, "LANG": "C.UTF-8"},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_native_runtime_hides_unrelated_virtualenv_root_files(self) -> None:
         runtime_root = runtime_python().parent.parent
         if not (runtime_root / "pyvenv.cfg").is_file():
