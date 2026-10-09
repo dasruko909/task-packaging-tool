@@ -378,7 +378,11 @@ class TestDataWhitespaceTests(unittest.TestCase):
             "validators/input_validator.cpp", "verification/brute.cpp",
             "verification/small_generator.cpp", "verification/mutants/first.cpp",
             "verification/mutants/second.cpp",
+            "checker/not-selected.cpp", "solutions/helper.cpp", "solutions/notes.txt",
+            "generators/unrelated.java", "solutions/include/helper.hpp",
+            "generators/data/profile.txt",
         ):
+            (root / name).parent.mkdir(parents=True, exist_ok=True)
             (root / name).write_text("", encoding="utf-8")
 
         input_data = "first\r\n\r\n"
@@ -389,8 +393,14 @@ class TestDataWhitespaceTests(unittest.TestCase):
         (root / "tests/out/1b.out").write_bytes(b"")
         manifest = {
             "checker": {"name": "checker.cpp"},
-            "solutions": [{"name": "solution_01.cpp"}],
-            "generators": [{"name": "generator_01.cpp"}],
+            "solutions": [{
+                "name": "solution_01.cpp",
+                "additional_files_names": ["include/helper.hpp"],
+            }],
+            "generators": [{
+                "name": "generator_01.cpp",
+                "additional_files_names": ["data/profile.txt"],
+            }],
             "test_generation": [{
                 "generator": "generator_01.cpp", "filename": "1b.in", "parameters": "",
             }],
@@ -412,12 +422,14 @@ class TestDataWhitespaceTests(unittest.TestCase):
         solution_inputs: list[str] = []
         mutant_inputs: list[str] = []
         comparisons: list[tuple[str, str, str]] = []
+        compiled: list[tuple[str, tuple[str, ...]]] = []
 
         class FakeRunner:
             def __init__(self, directory: Path, includes: Path):
                 self.directory = directory
 
-            def compile(self, source: Path) -> list[str]:
+            def compile(self, source: Path, **kwargs) -> list[str]:
+                compiled.append((source.name, tuple(path.name for path in kwargs.get('dependencies', []))))
                 return [str(source)]
 
             def program(self, source: Path, data: str = "", **kwargs) -> str:
@@ -451,6 +463,12 @@ class TestDataWhitespaceTests(unittest.TestCase):
         self.assertIn(input_data, mutant_inputs)
         self.assertIn((input_data, output_data, output_data), comparisons)
         self.assertEqual((root / "tests/in/1b.in").read_bytes(), b"")
+        self.assertNotIn('not-selected.cpp', {name for name, _ in compiled})
+        self.assertNotIn('helper.cpp', {name for name, _ in compiled})
+        self.assertNotIn('notes.txt', {name for name, _ in compiled})
+        self.assertNotIn('unrelated.java', {name for name, _ in compiled})
+        self.assertIn(('solution_01.cpp', ('helper.hpp',)), compiled)
+        self.assertIn(('generator_01.cpp', ('profile.txt',)), compiled)
 
     def test_checker_files_keep_exact_line_endings(self) -> None:
         config = self._config()

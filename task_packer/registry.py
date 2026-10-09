@@ -12,6 +12,45 @@ def safe_file(root: Path, name: str) -> Path:
     return relative_path(root, name)
 
 
+@dataclass(frozen=True)
+class ProgramRecord:
+    """One executable entry point selected by the package manifest."""
+
+    role: str
+    name: str
+    source: Path
+    root: Path
+    dependencies: tuple[Path, ...]
+    language: str | None
+
+
+def programs(root: Path, manifest: dict) -> list[ProgramRecord]:
+    """Return only manifest-registered checker, solution and generator programs."""
+    result = []
+    for key, folder, singular in (
+        ('checker', 'checker', True),
+        ('solutions', 'solutions', False),
+        ('generators', 'generators', False),
+    ):
+        raw = manifest.get(key)
+        entries = [raw] if singular and raw else (raw or [])
+        for entry in entries:
+            name = entry['name']
+            base = root / folder
+            result.append(ProgramRecord(
+                role=key[:-1] if key.endswith('s') else key,
+                name=name,
+                source=safe_file(base, name),
+                root=base,
+                dependencies=tuple(
+                    safe_file(base, dependency)
+                    for dependency in entry.get('additional_files_names', [])
+                ),
+                language=entry.get('prog_lang'),
+            ))
+    return result
+
+
 def validate_manifest(root: Path, data: dict) -> None:
     """Validate all file references before any consumer reads or writes them."""
     if not isinstance(data, dict):

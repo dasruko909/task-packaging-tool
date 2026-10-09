@@ -12,9 +12,8 @@ from typing import Any
 from .execution import ExecutionError, Runner
 from .costs import MAX_PROJECT_COST_USD, MODEL_PRICES
 from .models import ProjectConfig
-from .solve4 import source_extension
 from .storage import atomic_write_text, read_text_exact, write_json
-from .registry import records, solution_path, safe_file, load_manifest
+from .registry import records, solution_path, safe_file, load_manifest, programs
 from .paths import checked_tree, checked_path
 from .freshness import fingerprints
 
@@ -413,9 +412,66 @@ class Verification:
             validator = verification_program(self.root / 'validators', 'input_validator')
             if not validator.is_file():
                 raise ExecutionError('Independent input validator is missing. Prepare verification materials.')
-            # Compile the validator before checking individual inputs.  A build
-            # failure belongs to the validator, not to the first test it sees.
-            runner.compile(validator)
+            registered = programs(self.root, manifest)
+            registered_sources = {program.source.resolve() for program in registered}
+            compile_plans: dict[Path, dict[str, Any]] = {}
+
+            def add_program(source: Path, *, dependencies=(), root=None,
+                            language=None, label=None) -> None:
+                source = source.resolve()
+                plan = compile_plans.setdefault(source, {
+                    'dependencies': [], 'root': (root or source.parent).resolve(),
+                    'language': language, 'label': label or source.name,
+                })
+                if language and plan['language'] and language != plan['language']:
+                    raise ExecutionError(
+                        f"Conflicting languages registered for {source.name}: "
+                        f"{plan['language']} and {language}.", source
+                    )
+                plan['language'] = plan['language'] or language
+                for dependency in dependencies:
+                    dependency = dependency.resolve()
+                    if dependency not in plan['dependencies']:
+                        plan['dependencies'].append(dependency)
+
+            for program in registered:
+                add_program(
+                    program.source, dependencies=program.dependencies, root=program.root,
+                    language=program.language,
+                    label=f"registered {program.role} {program.name!r}",
+                )
+            add_program(validator, label='verification input validator')
+
+            cases_path = bundle / 'cases.json'
+            cases = json.loads(cases_path.read_text()) if cases_path.is_file() else []
+            if config.task_type == 'interactive':
+                add_program(self.root / 'public/interactor_local.cpp',
+                            label='interactive local tester')
+                for case in cases:
+                    if isinstance(case, dict) and isinstance(case.get('client'), str):
+                        add_program(safe_file(bundle, case['client']),
+                                    label=f"verification client {case['client']!r}")
+            else:
+                for stem in ('small_generator', 'brute'):
+                    source = verification_program(bundle, stem)
+                    add_program(source, label=f'verification {stem.replace("_", " ")}')
+                reducer = verification_program(bundle, 'reducer')
+                if usable_reducer(reducer):
+                    add_program(reducer, label='verification reducer')
+                for source in sorted(bundle.glob('author_brute_*.*')):
+                    if source.suffix in {'.cpp', '.py'}:
+                        add_program(source, label=f"author brute force {source.name!r}")
+                mutants_path = bundle / 'mutants.json'
+                mutants = json.loads(mutants_path.read_text()) if mutants_path.is_file() else []
+                for mutant in mutants:
+                    if isinstance(mutant, dict) and isinstance(mutant.get('name'), str):
+                        add_program(safe_file(bundle / 'mutants', mutant['name']),
+                                    label=f"verification mutant {mutant['name']!r}")
+
+            # Compile every selected entry point exactly once. Helpers and data
+            # are staged as dependencies and are never treated as programs.
+            for source, plan in compile_plans.items():
+                runner.compile(source, **plan)
             def validate_input(data, subtask=0, source=None):
                 try:
                     runner.program(validator, data, args=[str(subtask)], seconds=10)
@@ -423,22 +479,14 @@ class Verification:
                     raise ExecutionError(
                         f'Invalid data for subtask {subtask}: {error}', source
                     ) from error
-            sources = [p for folder in ("solutions", "generators", "checker")
-                       for p in sorted((self.root / folder).glob("*"))
-                       if p.is_file() and p.suffix in {".cpp", ".c", ".py", ".java", ".txt"}
-                       ]
-            sources += [
-                path for path in bundle.glob('*')
-                if (path.is_file() and path.suffix in {'.cpp', '.py'}
-                    and (path.name != 'reducer.cpp' or usable_reducer(path)))
-            ]
-            if config.task_type == "interactive":
-                sources.append(self.root / "public/interactor_local.cpp")
-            for source in sources:
-                runner.compile(source)
-            self.record("Compilation", "PASS", f"Checked {len(sources)} programs.")
+            self.record("Compilation", "PASS", f"Checked {len(compile_plans)} programs.")
             for generation in manifest.get("test_generation", []) if not config.existing_tests else []:
-                source = self.root / "generators" / generation["generator"]
+                source = safe_file(self.root / "generators", generation["generator"])
+                if source.resolve() not in registered_sources:
+                    raise ExecutionError(
+                        f"Generator {generation['generator']!r} is used by test_generation "
+                        "but is not registered in manifest.generators.", source
+                    )
                 data = runner.program(source, args=generation["parameters"].split(), seconds=10)
                 atomic_write_text(self.root / "tests/in" / generation["filename"], data)
                 again = runner.program(source, args=generation['parameters'].split(), seconds=10)
@@ -447,10 +495,15 @@ class Verification:
             self.record("Generators", "PASS" if not config.existing_tests else "SKIP",
                         "Ran small, random, and max profiles." if not config.existing_tests
                         else "Used existing tests; imported-package generators were not run.")
-            judge = self.root / "checker" / manifest["checker"]["name"]
-            extension = source_extension(config.solution_language)
+            judge = safe_file(self.root / "checker", manifest["checker"]["name"])
             solutions = [(item, solution_path(config, item).resolve())
                          for item in config.subtasks]
+            for _, solution in solutions:
+                if solution not in registered_sources:
+                    raise ExecutionError(
+                        f"Solution {solution.name!r} is selected for verification but is not "
+                        "registered in manifest.solutions.", solution
+                    )
             full = solutions[-1][1]
             inputs = [safe_file(self.root / 'tests/in', test.input) for test in registry]
             output_names = {test.input: test.output for test in registry}
@@ -485,7 +538,6 @@ class Verification:
                             raise ExecutionError(f"Partial solution {solution.name}: interaction failed on {path.name}.")
                     self.record(f"Subtask {item.index}", "PASS" if assigned else "SKIP",
                                 f"Ran {len(assigned)} conversations in the subtask group.")
-                cases = json.loads((bundle / "cases.json").read_text())
                 for case in cases:
                     validate_input(case['input'])
                     test = runner.directory / "interaction-input.txt"
@@ -505,7 +557,6 @@ class Verification:
                 return
 
             if config.task_type == "multiple":
-                cases = json.loads((bundle / "cases.json").read_text())
                 for case in cases:
                     validate_input(case['input'])
                     actual = self.check_answer(runner, judge, case["input"], case["reference"], case["candidate"])
@@ -594,10 +645,8 @@ class Verification:
                     count += 1
             self.record("Brute force", "PASS", f"Compared solutions on {count} small tests with recorded fixed seeds.")
 
-            mutants_path = bundle / 'mutants.json'
             if not mutants_path.is_file():
                 raise ExecutionError('No test plan for deliberately incorrect solutions.')
-            mutants = json.loads(mutants_path.read_text())
             if len(mutants) < 2:
                 raise ExecutionError('At least two realistic incorrect solutions are required.')
             coverage = []
