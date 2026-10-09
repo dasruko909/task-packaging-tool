@@ -11,7 +11,7 @@ from .costs import conservative_project_estimate
 from .models import WorkflowState
 from .onboarding import gather_config
 from .openai_client import OpenAIClient
-from .storage import StateStore
+from .storage import StateReadError, StateStore
 from .workflow import Workflow
 
 
@@ -43,12 +43,15 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _print_projects(projects: list[tuple[str, WorkflowState]]) -> None:
+def _print_projects(projects: list[tuple[str, WorkflowState | StateReadError]]) -> None:
     if not projects:
         print("No saved projects.")
         return
     print("Saved projects:")
     for index, (codename, state) in enumerate(projects, 1):
+        if isinstance(state, StateReadError):
+            print(f"  {index}. {codename} — requires repair: {state}")
+            continue
         if state.finished and state.config and (
             not state.config.specification or not any(
                 (state.config.package_dir / 'validators' / f'input_validator{suffix}').is_file()
@@ -86,7 +89,6 @@ def _migrate_legacy_completion(state: WorkflowState, store: StateStore) -> None:
 
 
 def _select_state(args: argparse.Namespace) -> tuple[WorkflowState, StateStore]:
-    projects = StateStore.available()
     if args.project:
         store = StateStore(args.project)
         if not store.path.exists():
@@ -95,11 +97,9 @@ def _select_state(args: argparse.Namespace) -> tuple[WorkflowState, StateStore]:
         if not store.path.exists():
             raise RuntimeError(f"The project disappeared while opening it: {args.project}")
         state = store.load()
-        _migrate_legacy_completion(state, store)
-        if state.config is None:
-            gather_config(state, store)
         return state, store
 
+    projects = StateStore.available()
     unfinished = projects
     if unfinished and not args.new:
         _print_projects(unfinished)
@@ -110,13 +110,12 @@ def _select_state(args: argparse.Namespace) -> tuple[WorkflowState, StateStore]:
             validator=lambda value: value <= len(unfinished),
         )
         if selection:
-            codename, _ = unfinished[selection - 1]
+            codename, selected = unfinished[selection - 1]
+            if isinstance(selected, StateReadError):
+                raise selected
             store = StateStore(codename)
             store.acquire_lock()
             state = store.load()
-            _migrate_legacy_completion(state, store)
-            if state.config is None:
-                gather_config(state, store)
             return state, store
 
     state = WorkflowState()
@@ -134,10 +133,10 @@ def main() -> None:
         if not show_doctor():
             raise SystemExit(1)
         return
-    if args.status:
-        _print_projects(StateStore.available())
-        return
     try:
+        if args.status:
+            _print_projects(StateStore.available())
+            return
         if args.setup or args.solve == "connection":
             from .solve_menu import configure_connection
             configure_connection()
@@ -167,12 +166,15 @@ def main() -> None:
                 print("The code does not match. The project was not changed.")
                 return
             raise ProjectDeleted(str(delete_project(store.codename)))
-        cleanup(state, store)
         if args.history:
             import json
             for path in history(store):
                 print(path.name + ': ' + json.loads((path / 'checkpoint.json').read_text())['reason'])
             return
+        _migrate_legacy_completion(state, store)
+        if state.config is None:
+            gather_config(state, store)
+        cleanup(state, store)
         if args.restore:
             restore(state, store, args.restore)
         if args.edit and not edit_menu(state, store):

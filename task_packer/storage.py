@@ -19,6 +19,17 @@ STATE_ROOT = Path(".packer-projects")
 TRASH_ROOT = Path(".packer-trash")
 
 
+class StateReadError(ValueError):
+    """A state needs manual repair; includes the file and the concrete cause."""
+
+
+def _read_state(path: Path) -> WorkflowState:
+    try:
+        return WorkflowState.from_dict(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, ValueError, TypeError) as error:
+        raise StateReadError(f"{path}: {error}") from error
+
+
 class ProjectLock:
     def __init__(self, handle: IO[str]):
         self._handle = handle
@@ -93,8 +104,7 @@ class StateStore:
 
     def load(self) -> WorkflowState:
         self._recover_restore()
-        data = json.loads(self.path.read_text(encoding="utf-8"))
-        return WorkflowState.from_dict(data)
+        return _read_state(self.path)
 
     def _recover_restore(self) -> None:
         """Finish or roll back a restore interrupted between filesystem swaps."""
@@ -133,16 +143,16 @@ class StateStore:
         journal.unlink(missing_ok=True)
 
     @staticmethod
-    def available() -> list[tuple[str, WorkflowState]]:
-        projects: list[tuple[str, WorkflowState]] = []
+    def available() -> list[tuple[str, WorkflowState | StateReadError]]:
+        projects: list[tuple[str, WorkflowState | StateReadError]] = []
         if not STATE_ROOT.exists():
             return projects
         for path in sorted(STATE_ROOT.glob("*/state.json")):
             try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-                projects.append((path.parent.name, WorkflowState.from_dict(data)))
-            except (OSError, ValueError, TypeError):
-                continue
+                state = _read_state(path)
+            except StateReadError as error:
+                state = error
+            projects.append((path.parent.name, state))
         return projects
 
 

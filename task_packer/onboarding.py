@@ -40,11 +40,13 @@ def _detected_subtasks(data: dict[str, Any]) -> list[Subtask]:
         raise ModelFormatError("has_explicit_subtasks must be a boolean.")
     require_string(data, "reason")
     raw = data.get("subtasks")
-    if not isinstance(raw, list) or not raw:
-        raise ModelFormatError("The model must return at least one subtask.")
+    if not isinstance(raw, list):
+        raise ModelFormatError("The model must return a subtask list.")
 
     if not explicit:
         return [Subtask(1, "Full", 100, "No additional constraints")]
+    if not raw:
+        raise ModelFormatError("Explicit subtasks must contain at least one subtask.")
 
     result: list[Subtask] = []
     for expected_index, item in enumerate(raw, 1):
@@ -399,7 +401,9 @@ def gather_config(
         count = int(setup["subtask_count"])
     else:
         heading("Custom subtasks", "The last one automatically receives the remaining points.")
-        count = saved_or_ask_int("subtask_count", "How many subtasks are there?", default=len(imported_groups) or None, minimum=1)
+        count = saved_or_ask_int("subtask_count", "How many subtasks are there?", default=len(imported_groups) or 1, minimum=1)
+    if count < 1:
+        raise RuntimeError('There must be at least one subtask.')
     if imported_groups and count != len(imported_groups):
         raise RuntimeError('The number of subtasks must match the scored groups in the imported package.')
     partial_subtasks = setup.setdefault("subtasks", [])
@@ -431,9 +435,10 @@ def gather_config(
                 target["constraints_draft"] = text
                 store.save(state)
 
+            constraints_default = "No additional constraints" if count == 1 and not imported_groups else ""
             item["constraints"] = ask_multiline(
                 "Enter constraints. You can use multiple lines and LaTeX formulas.",
-                initial=str(item.get("constraints_draft", "")),
+                initial=str(item.get("constraints_draft", constraints_default)),
                 on_change=save_constraints,
             )
             item.pop("constraints_draft", None)
