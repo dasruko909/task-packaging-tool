@@ -24,7 +24,8 @@ class Preview:
         fence = "`" * max(3, longest + 1)
         suffix = language.strip()
         opener = f"{fence}{suffix}" if suffix else fence
-        return f"{opener}\n{text}\n{fence}"
+        delimiter = "" if not text or text.endswith("\n") else "\n"
+        return f"{opener}\n{text}{delimiter}{fence}"
 
 
     @staticmethod

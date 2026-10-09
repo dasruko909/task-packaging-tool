@@ -13,7 +13,7 @@ from .execution import ExecutionError, Runner
 from .costs import MAX_PROJECT_COST_USD, MODEL_PRICES
 from .models import ProjectConfig
 from .solve4 import source_extension
-from .storage import atomic_write_text, write_json
+from .storage import atomic_write_text, read_text_exact, write_json
 from .registry import records, solution_path, safe_file, load_manifest
 from .paths import checked_tree, checked_path
 from .freshness import fingerprints
@@ -397,7 +397,7 @@ class Verification:
                      reference: str, candidate: str) -> int:
         paths = [runner.directory / name for name in ("input.txt", "reference.txt", "candidate.txt")]
         for path, text in zip(paths, (data, reference, candidate)):
-            path.write_text(text)
+            atomic_write_text(path, text)
         try:
             return score(runner.program(judge, args=[str(p) for p in paths], seconds=10))
         except ExecutionError as error:
@@ -440,8 +440,6 @@ class Verification:
             for generation in manifest.get("test_generation", []) if not config.existing_tests else []:
                 source = self.root / "generators" / generation["generator"]
                 data = runner.program(source, args=generation["parameters"].split(), seconds=10)
-                if not data.strip():
-                    raise ExecutionError("Generator produced empty input.", source)
                 atomic_write_text(self.root / "tests/in" / generation["filename"], data)
                 again = runner.program(source, args=generation['parameters'].split(), seconds=10)
                 if data != again:
@@ -463,7 +461,7 @@ class Verification:
                     if test.generation
                     else path
                 )
-                validate_input(path.read_text(), subtask, source)
+                validate_input(read_text_exact(path), subtask, source)
             self.record('Input validation', 'PASS', f'Checked format and constraints of {len(inputs)} tests, including group conditions.')
             if not inputs:
                 raise ExecutionError("No tests to run.")
@@ -520,12 +518,12 @@ class Verification:
 
             pending_outputs = {}
             for input_path in inputs:
-                data = input_path.read_text()
+                data = read_text_exact(input_path)
                 answer = runner.program(full, data, seconds=seconds, memory_kb=config.memory_limit_kb)
                 expected_path = self.root / "tests/out" / output_names.get(input_path.name, input_path.name.replace(".in", ".out"))
                 generated = any(test['input'] == input_path.name and not test.get('output') for group in manifest['test_groups'] for test in group['tests'])
                 if expected_path.exists() and not (self.regenerate_outputs and generated):
-                    expected = expected_path.read_text()
+                    expected = read_text_exact(expected_path)
                     valid = (self.check_answer(runner, judge, data, expected, answer) == 100)
                     if not valid:
                         raise ExecutionError(f"Result does not match test {input_path.name}.\nInput: {data[:2000]}\nExpected: {expected[:2000]}\nResult: {answer[:2000]}", full)
@@ -539,9 +537,9 @@ class Verification:
                 names = {test["input"] for test in group.get("tests", [])} if group else set()
                 assigned = [path for path in inputs if path.name in names]
                 for path in assigned:
-                    data = path.read_text()
+                    data = read_text_exact(path)
                     expected_path = self.root / "tests/out" / output_names.get(path.name, path.name.replace(".in", ".out"))
-                    expected = pending_outputs[expected_path] if expected_path in pending_outputs else expected_path.read_text()
+                    expected = pending_outputs[expected_path] if expected_path in pending_outputs else read_text_exact(expected_path)
                     answer = runner.program(solution, data, seconds=seconds, memory_kb=config.memory_limit_kb)
                     valid = (self.check_answer(runner, judge, data, expected, answer) == 100)
                     if not valid:
@@ -555,8 +553,6 @@ class Verification:
                     small_generator = verification_program(bundle, 'small_generator')
                     brute_program = verification_program(bundle, 'brute')
                     data = runner.program(small_generator, args=[str(seed), str(item.index)])
-                    if not data.strip():
-                        raise ExecutionError("Small-test generator produced empty input.", small_generator)
                     validate_input(data, item.index, small_generator)
                     expected = runner.program(brute_program, data, seconds=10)
                     for brute in sorted(bundle.glob('author_brute_*.*')):
@@ -611,11 +607,11 @@ class Verification:
                 killed_by = None
                 outcome = 'survived'
                 for input_path in inputs:
-                    data = input_path.read_text()
+                    data = read_text_exact(input_path)
                     expected_path = self.root / 'tests/out' / output_names[input_path.name]
                     expected = pending_outputs.get(expected_path)
                     if expected is None:
-                        expected = expected_path.read_text()
+                        expected = read_text_exact(expected_path)
                     try:
                         answer = runner.program(source, data, seconds=seconds, memory_kb=config.memory_limit_kb)
                         killed = self.check_answer(runner, judge, data, expected, answer) != 100
@@ -640,5 +636,5 @@ class Verification:
             for path, answer in pending_outputs.items():
                 if path.is_file():
                     import time
-                    atomic_write_text(self.root / 'verification/output-history' / f'{path.name}.{time.time_ns()}', path.read_text())
+                    atomic_write_text(self.root / 'verification/output-history' / f'{path.name}.{time.time_ns()}', read_text_exact(path))
                 atomic_write_text(path, answer)

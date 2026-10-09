@@ -249,8 +249,8 @@ class Workflow(ContentReview, Preview, Review, TestGeneration, Solutions):
             data["tests"] = tests
             if preserve_samples and tests:
                 raise ModelFormatError("For existing files, return tests: []; examples must use only tests/in and tests/out.")
-            if self.config.task_type != "interactive" and any(not test.get("output", "").strip() for test in tests):
-                raise ModelFormatError("Every standard example must have a non-empty 'output' field.")
+            if self.config.task_type != "interactive" and any("output" not in test for test in tests):
+                raise ModelFormatError("Every standard example must include an 'output' field.")
             if not preserve_samples and self.config.task_type != "interactive":
                 size_errors = example_size_errors(tests)
                 if size_errors:

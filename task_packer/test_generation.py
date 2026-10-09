@@ -53,8 +53,8 @@ class TestGeneration:
                 raise ModelFormatError(
                     f"At most {MAX_TESTS_PER_SUBTASK} sample tests can be prepared."
                 )
-            if any(not test.get("output", "").strip() for test in tests):
-                raise ModelFormatError("Every public sample must have a non-empty 'output' field.")
+            if any("output" not in test for test in tests):
+                raise ModelFormatError("Every public sample must include an 'output' field.")
             if example_size_errors(tests):
                 raise ModelFormatError(' '.join(example_size_errors(tests)))
             subtasks = data.get("subtasks")
