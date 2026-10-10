@@ -506,6 +506,11 @@ solve task -c {shlex.quote(config.codename)} -p "$(pwd)" upload --stop-work
 Before publication, manually review the statement, limits, source, partial-solution
 results, and any skipped checks. Test a checker or interactor against valid, invalid,
 and maliciously formatted answers. No checksums are added for new generations.
+
+Python programs with declared `additional_files_names` use the packer's isolated
+local adapter. Run `./check_with_solve.sh --reproduce` for exported preparation and
+reproduction. Unmodified libsolve 1.0.11 rejects these Python helpers; the commands
+above do not establish support for remote jail execution or server grading.
 """
     if config.input_package and (root / 'readme.md').is_file():
         atomic_write_text(root / 'packer-readme.md', package_readme)
@@ -519,7 +524,7 @@ PYTHONPATH="$PWD/packer_tools" python3 -m task_packer.portable "$PWD" "$@"
 """
     portable_dir = root / 'packer_tools/task_packer'
     portable_dir.mkdir(parents=True, exist_ok=True)
-    for name in ('__init__.py', 'sandbox.py', 'portable.py', 'paths.py', 'registry.py'):
+    for name in ('__init__.py', 'sandbox.py', 'portable.py', 'paths.py', 'registry.py', 'native_runtime.py'):
         shutil.copy2(Path(__file__).parent / name, portable_dir / name)
     atomic_write_text(root / "check_with_solve.sh", commands)
     (root / "check_with_solve.sh").chmod(0o755)

@@ -7,82 +7,11 @@ import logging
 from pathlib import Path
 import tempfile
 import hashlib
-import shlex
-from contextvars import ContextVar
-
-from .sandbox import isolated
 
 from .storage import write_json
 from .paths import project_code
 from .registry import load_manifest
-from .solve_native import LOCAL_WALL_TIME_FACTOR
-
-
-def local_wall_time_limit(time_limit: int | None) -> int | None:
-    """Allow scheduler stalls locally without relaxing the measured CPU limit."""
-    return time_limit * LOCAL_WALL_TIME_FACTOR if time_limit is not None else None
-
-
-def install_local_wall_time_margin(checker_root: Path | None = None) -> None:
-    """Separate libsolve's no-jail wall watchdog from its CPU-time grading limit."""
-    from libsolve.execution.language_utils import LanguageUtils
-    from libsolve.execution.config import PYTHON3_PATH, PYTHON_COMPILATION_SCRIPT
-    from libsolve.package.program import Program
-
-    if getattr(LanguageUtils, '_packer_wall_margin_installed', False):
-        return
-    original = LanguageUtils._run_command_no_jail.__func__
-    permissions = ContextVar('native_program_permissions', default=None)
-
-    def scoped(method, compiling=False):
-        def invoke(program, *args, **kwargs):
-            readable = [program.source_path.resolve(), *program.additional_files]
-            build = program.preparation_path
-            writable = []
-            if build is not None:
-                (writable if compiling else readable).append(build.resolve())
-            if not compiling and checker_root is not None and program.path.resolve() == checker_root.resolve():
-                params = kwargs.get('params', [])
-                params = shlex.split(params) if isinstance(params, str) else params
-                readable.extend(Path(value).resolve() for value in params)
-            token = permissions.set((readable, writable))
-            try:
-                return method(program, *args, **kwargs)
-            finally:
-                permissions.reset(token)
-        return invoke
-
-    def run_with_wall_margin(cls, cmd, time_limit=None):
-        allowed = permissions.get()
-        if allowed is None:
-            raise RuntimeError('Native execution has no program isolation scope')
-        readable, writable = allowed
-        executable = Path(str(cmd.params[0]))
-        if executable.is_file():
-            # A virtualenv interpreter symlink is outside the nested sandbox;
-            # execute its mounted target without exposing the virtualenv tree.
-            cmd.params[0] = str(executable.resolve())
-            readable = [*readable, executable.resolve()]
-            if executable.resolve() == Path(PYTHON_COMPILATION_SCRIPT).resolve():
-                # The compiler script's env shebang can select a different
-                # system Python and produce bytecode the runtime cannot read.
-                interpreter = Path(PYTHON3_PATH).resolve()
-                cmd.params.insert(0, str(interpreter))
-                readable.append(interpreter)
-        with tempfile.TemporaryDirectory(prefix='native-invocation-') as temporary:
-            # Redirections stay with the trusted supervisor. The program receives
-            # only the resulting descriptors, never the surrounding output tree.
-            cmd.params = isolated(
-                [str(value) for value in cmd.params], work=Path(temporary),
-                readable=readable, writable=writable,
-            )
-            return original(cls, cmd, time_limit=local_wall_time_limit(time_limit))
-
-    Program.prepare = scoped(Program.prepare, compiling=True)
-    Program.run = scoped(Program.run)
-    LanguageUtils._run_command_no_jail = classmethod(run_with_wall_margin)
-    LanguageUtils._packer_wall_margin_installed = True
-
+from .native_runtime import install_local_wall_time_margin
 
 def execute(action: str, code: str, path: Path, assignments: dict) -> dict:
     project_code(code)

@@ -18,6 +18,7 @@ from .sandbox import isolated
 from .paths import checked_path, checked_tree
 from .registry import safe_file, load_manifest
 from .freshness import exported_path, fingerprints
+from .native_runtime import LOCAL_WALL_TIME_FACTOR
 
 ROOT = Path(__file__).resolve().parent.parent
 WHEELS = ROOT / "vendor/wheels"
@@ -33,7 +34,6 @@ WHEEL_MESSAGE = (
 )
 LOCAL_TIME_LIMIT_NUMERATOR = 5
 LOCAL_TIME_LIMIT_DENOMINATOR = 4
-LOCAL_WALL_TIME_FACTOR = 4
 
 
 def install_standard_checker(name: str, directory: Path) -> None:

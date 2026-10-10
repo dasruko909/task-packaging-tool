@@ -45,7 +45,9 @@ def main() -> None:
 import sys,json,hashlib,tempfile
 from pathlib import Path
 from libsolve.package import Package
+from task_packer.native_runtime import install_local_wall_time_margin
 root=Path(sys.argv[1]); recipe=json.loads((root/'generation-recipe.json').read_text()) if (root/'generation-recipe.json').exists() else {}
+install_local_wall_time_margin(root/'checker')
 config=json.loads((root/'config.json').read_text())
 if sys.argv[2]=='reproduce':
  config['test_generation']=recipe.get('test_generation',[])
@@ -61,8 +63,9 @@ print('Validation and reproduction completed.' if sys.argv[2]=='reproduce' else 
 '''
         command = isolated(
             [sys.executable, '-c', program, str(package), 'reproduce' if reproduce else 'check'],
-            work=work, readable=runtime_mounts(),
-            env={'PATH': str(Path(sys.executable).parent) + os.pathsep + os.defpath},
+            work=work, readable=[Path(__file__).parent, *runtime_mounts()],
+            env={'PATH': str(Path(sys.executable).parent) + os.pathsep + os.defpath,
+                 'PYTHONPATH': str(Path(__file__).parent.parent)},
         )
         subprocess.run(command, check=True, timeout=1200)
 
