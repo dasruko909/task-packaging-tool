@@ -128,11 +128,20 @@ class Verification:
     def _api_history(self) -> dict[str, Any]:
         history = Path(".packer-projects") / self.config.codename / "history/api-calls"
         calls = []
+        checked_path(history)
         for path in sorted(history.glob("*.txt")) if history.is_dir() else []:
-            event = self._read_json(path, {})
-            if isinstance(event, dict):
-                calls.append(event)
-        models = sorted({str(row["model"]) for row in calls if row.get("model")})
+            checked_path(path)
+            event = self._read_json(path, None)
+            if (not isinstance(event, dict)
+                    or not isinstance(event.get("model"), str)
+                    or not event["model"].strip()
+                    or not isinstance(event.get("status"), str)
+                    or event["status"] not in {"completed", "failed", "empty"}
+                    or type(event.get("started_at")) not in (int, float)
+                    or type(event.get("max_output_tokens")) is not int):
+                continue
+            calls.append(event)
+        models = sorted({row["model"].strip() for row in calls})
         completed = sum(row.get("status") == "completed" for row in calls)
         failed = sum(row.get("status") in {"failed", "empty"} for row in calls)
         return {"recorded_calls": len(calls), "completed_calls": completed,
