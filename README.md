@@ -5,14 +5,14 @@ A step-by-step tool that turns a task statement into a checked Solve 4 package. 
 ## Solve 4 wheels (not included)
 
 Wrocław students: create `vendor/wheels/` if it is missing, then place the two
-private Solve 4 wheel files there before running the Solve-dependent features:
+private Solve 4 wheel files there to enable Solve-dependent features:
 
 ```text
 vendor/wheels/libsolve-1.0.11-py3-none-any.whl
 vendor/wheels/solve_cli-1.0.14-py3-none-any.whl
 ```
 
-These files are intentionally not included in this repository because the author does not have permission to redistribute them. Obtain them from the authorised course or Solve 4 distribution and do not commit or share them through this repository. After copying them, run `./run.sh` again so the private packages can be installed.
+These files are intentionally not included in this repository because the author does not have permission to redistribute them. Obtain them from the authorised course or Solve 4 distribution and do not commit or share them through this repository. The launcher installs them when both are present and the exact required versions are not already installed. If you add the files after first launching the app, run `./run.sh` again.
 
 Without the wheels, the basic project and package-generation workflow still works, but some functions will not: native Solve validation, compilation and grading, standard-checker installation, downloading tasks, and server-side Solve actions such as upload, preview and rejudge.
 
@@ -34,7 +34,7 @@ Follow the terminal prompts and choose the letter next to an action. Press Enter
 - an OpenAI API key for generation
 - a Solve token only for upload or server-side PDF/HTML preview
 
-The first run creates `.venv` and installs dependencies. Check the environment with:
+The first run creates `.venv` and installs the application requirements. Later launches reuse a healthy environment without contacting pip. Optional Solve wheels are installed only when both local files are present. Check the Solve environment with:
 
 ```bash
 ./run.sh --doctor
