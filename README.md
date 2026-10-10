@@ -4,10 +4,10 @@ A step-by-step tool that turns a task statement into a checked Solve 4 package. 
 
 ## First launch on Linux
 
-On Ubuntu or Debian, install the requirements, clone the repository, and start setup with one command. Internet access is needed for the system packages, GitHub, and public Python packages:
+Python 3.10 or newer is required. On Ubuntu or Debian, install the requirements, clone the repository, and start setup with one command. Internet access is needed for the system packages, GitHub, and public Python packages:
 
 ```bash
-sudo apt update && sudo apt install -y git python3 python3-venv g++ bubblewrap && git clone https://github.com/dasruko909/task-packaging-tool.git && cd task-packaging-tool && ./run.sh --setup
+sudo apt update && sudo apt install -y git python3 python3-venv g++ bubblewrap && git clone https://github.com/dasruko909/task-packaging-tool.git && cd task-packaging-tool && mkdir -p vendor/wheels && ./run.sh --setup
 ```
 
 This creates a local `.venv`, installs the public Python requirements, and prompts for the OpenAI API key and Solve server token. The API key is used to generate or revise materials; the Solve token is used for server actions such as download, upload, preview, or rejudge. Credentials are saved privately outside task packages. Basic local use does not require Solve server access; to skip configuring it, provide `OPENAI_API_KEY` through your environment and run `./run.sh`. If you already have a checkout, update it with `git pull --ff-only` instead of cloning. Other Linux distributions should install the equivalent packages with their package manager.
