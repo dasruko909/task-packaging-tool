@@ -495,6 +495,9 @@ class Workflow(ContentReview, Preview, Review, TestGeneration, Solutions):
         self.verification_materials()
         for attempt in range(3):
             try:
+                if not self.state.is_done("editorial"):
+                    self.editorial()
+                write_package_metadata(self.config, usage=self.state.usage)
                 report.run()
                 return
             except ExecutionError as error:
@@ -503,7 +506,8 @@ class Workflow(ContentReview, Preview, Review, TestGeneration, Solutions):
                     raise RuntimeError(f"Verification failed: {error}. Details are in verification/report.md.") from error
                 source = error.source
                 if source.resolve().parent == (self.config.package_dir / "tests/in").resolve():
-                    self._repair_invalid_test(source, error, attempt)
+                    repaired = self._repair_invalid_test(source, error, attempt)
+                    report.input_overrides[source.name] = repaired
                     continue
                 print(f"Repairing {source.name} based on its execution result…")
                 system = ("Repair the program based on the actual error. Preserve its interface. "
@@ -541,7 +545,7 @@ class Workflow(ContentReview, Preview, Review, TestGeneration, Solutions):
 
     def _repair_invalid_test(
         self, source: Path, error: ExecutionError, attempt: int
-    ) -> None:
+    ) -> str:
         if self.config.existing_tests:
             raise RuntimeError(
                 f"The validator rejects imported test {source.name}; author data is not "
@@ -632,11 +636,14 @@ class Workflow(ContentReview, Preview, Review, TestGeneration, Solutions):
             require_text(data, "input")
             require_string(data, "description")
 
+        repaired_input = None
+
         def accept(data: dict[str, Any]) -> None:
+            nonlocal repaired_input
             from .revisions import snapshot
             snapshot(self.store, f"test-{source.name}", read_text_exact(source))
             repaired = require_text(data, "input")
-            atomic_write_text(source, repaired)
+            repaired_input = repaired
             repaired_description = require_string(data, "description")
             if sample_index is not None:
                 planned_tests[sample_index]["input"] = repaired
@@ -644,8 +651,6 @@ class Workflow(ContentReview, Preview, Review, TestGeneration, Solutions):
                 self.state.setup.setdefault("accepted", {})["test_plan"] = json.dumps(
                     self.config.test_plan, ensure_ascii=False
                 )
-                if registered and registered.get("output"):
-                    safe_file(self.config.package_dir / "tests/out", registered["output"]).unlink(missing_ok=True)
             elif accepted_data is not None:
                 tests = accepted_data.get("tests", [])
                 if 0 <= corner_index < len(tests):
@@ -676,6 +681,10 @@ class Workflow(ContentReview, Preview, Review, TestGeneration, Solutions):
             response_schema=repair_schema,
         )
 
+        if repaired_input is None:
+            raise RuntimeError('No test repair was accepted.')
+        return repaired_input
+
     def finalize(self) -> None:
         heading("Stage 8/8 — manifest and validation",
                 "Writing the package manifest, checking it locally, then preparing the ZIP.")
@@ -691,8 +700,6 @@ class Workflow(ContentReview, Preview, Review, TestGeneration, Solutions):
             if errors:
                 raise RuntimeError("Local validation failed:\n- " + "\n- ".join(errors))
             self.verify_code(report)
-            if not self.state.is_done("editorial"):
-                self.editorial()
             native_ok, native_output = solve_validation(self.config)
             report.record("Solve CLI", "SKIP" if native_ok is None else "PASS" if native_ok else "FAIL",
                           native_output or "Solve validation completed.")
@@ -712,12 +719,12 @@ class Workflow(ContentReview, Preview, Review, TestGeneration, Solutions):
             if self.state.setup.get('review_pending') or self.state.drafts:
                 raise RuntimeError('Unapproved stages remain. Return to their review before exporting.')
             write_package_metadata(self.config, usage=self.state.usage)
-            archive = archive_package(self.config)
+            archive = archive_package(self.config, expected=report.verified_fingerprints)
             print(f"Ready ZIP: {archive.resolve()}")
             report.record("Final result", "PASS", "Local checks completed; scope and omissions are described above.")
             self.state.finished = True
             from .freshness import certify
-            certify(self.config, native=bool(native_ok))
+            certify(self.config, native=bool(native_ok), expected=report.verified_fingerprints)
             self._complete("finalize")
             label = "Checked locally and with Solve CLI" if native_ok else "Checked locally; Solve CLI validation was not run"
             print(f"\n{label}. Paczka: {self.config.package_dir.resolve()}")

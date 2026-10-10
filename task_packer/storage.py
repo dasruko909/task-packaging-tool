@@ -153,6 +153,12 @@ class StateStore:
         state = _read_state(self.path)
         project_paths(self.codename)
         self._recover_restore()
+        if state.config:
+            from .verification import recover_tests
+            from .solve_native import recover_export
+            root = state.config.package_dir
+            recover_tests(root)
+            recover_export(root.parent / f'{self.codename}.zip')
         return state
 
     def _recover_restore(self) -> None:
