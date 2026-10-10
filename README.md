@@ -142,6 +142,28 @@ After completion, use:
 
 ## Cost and privacy
 
-The default model is `gpt-6-astra`. The program estimates cost before work starts, reports it after each call, and enforces a default $5.00 per-project cap. For a request with an attached source document, the preflight check reserves $1.00 for document input. Set `OPENAI_MODEL` to choose another model.
+The default model remains `gpt-6-astra`. Set `OPENAI_MODEL` to `gpt-6.1-sol` or `gpt-6-luna` to use an alternate model, without changing the terminal prompts. Other model IDs (including snapshot IDs) are rejected before generation; prices are never guessed. Requests use the public OpenAI endpoint and Standard processing (`service_tier=default`); other `OPENAI_BASE_URL` endpoints are rejected because their prices are not configured.
+
+There is **no project monetary cap by default**. The program estimates cost using the selected model before work starts and records actual usage after each response. To enforce a cap on accumulated project spending, set a finite positive USD amount:
+
+```bash
+PACKER_BUDGET_USD=10 OPENAI_MODEL=gpt-6.1-sol ./run.sh --project bikes
+```
+
+To remove a previously exported cap, run `unset PACKER_BUDGET_USD`, or use `PACKER_BUDGET_USD= ./run.sh --project bikes`. Zero, negative, NaN, infinity, and malformed amounts are rejected. Raising or removing a cap does not reset spending. Resuming, switching models, and restoring earlier content retain accumulated actual cost and tokens. This application cap concerns paid OpenAI API requests; it is independent of your Codex allowance.
+
+Before each call, an explicit cap must cover the request's conservative maximum cost as well as existing spending and unconfirmed charges. Text input is bounded by UTF-8 bytes (including JSON schemas) plus framing allowance. PDFs/images and other attachments use the model's entire remaining context capacity because extracted text and image tokens cannot be bounded reliably from file size. Output is bounded by the requested limit, including reasoning tokens. The bound includes possible cache writes and long-context pricing, so a small cap may refuse a document call even when its eventual charge would be smaller. A refusal saves progress; increase or remove the cap and resume. Automatic API retries are disabled to keep each preflight valid.
+
+Empty and failed responses retain any reported usage. If an attempted request returns no usage (including a connection interruption), its maximum possible charge is saved separately as `unconfirmed_cost_usd`, without inventing actual tokens or cost. These reservations also count against future caps and appear in reports. Reports use `null` for the budget and percentage when no cap is set. Historical actual costs are retained, rather than repricing aggregate tokens at the current model's rate.
+
+Standard rates verified on 2026-10-10, in USD per million tokens:
+
+| Model | Input | Cached input | Cache writes | Output |
+|---|---:|---:|---:|---:|
+| [GPT-6 Astra](https://developers.openai.com/api/docs/models/gpt-6-astra) | 10.00 | 1.00 | 12.50 | 50.00 |
+| [GPT-6.1 Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol) | 2.00 | 0.10 | 2.50 | 10.00 |
+| [GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna) | 0.10 | 0.01 | 0.125 | 0.50 |
+
+All three support Responses, text/image input, structured output, a 1,050,000-token context and up to 128,000 output tokens. Above 272,000 input tokens **in one request**, input/cache rates double and output rates multiply by 1.5 for that whole request. The initial project estimate assumes 6,000 input tokens per call; it is an estimate, not the cap preflight. See the [Responses API reference](https://developers.openai.com/api/reference/python/resources/responses/methods/create) and [PDF input details](https://developers.openai.com/api/docs/guides/file-inputs).
 
 Generation and review requests send relevant task materials to OpenAI, including statement text, PDFs, selected images, code, feedback, and execution diagnostics. Do not supply confidential material without authorization. Task code runs locally without network access inside `bubblewrap`.

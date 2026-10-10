@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .execution import ExecutionError, Runner
-from .costs import MAX_PROJECT_COST_USD, MODEL_PRICES
+from .settings import Settings, MODELS
 from .models import ProjectConfig
 from .storage import atomic_write_text, read_text_exact, write_json
 from .registry import records, solution_path, safe_file, load_manifest, programs
@@ -159,6 +159,9 @@ class Verification:
         history = self._api_history()
         output_tokens = int(usage.get("output_tokens", 0) or 0)
         cost = float(usage.get("cost_usd", 0.0) or 0.0)
+        settings = Settings.from_environment()
+        cap = settings.budget_usd
+        unconfirmed = float(usage.get('unconfirmed_cost_usd', 0.0) or 0.0)
         result = {
             "input_tokens": input_tokens,
             "cached_input_tokens": cached,
@@ -166,19 +169,21 @@ class Verification:
             "output_tokens": output_tokens,
             "total_tokens": input_tokens + output_tokens,
             "cost_usd": cost,
-            "project_budget_usd": MAX_PROJECT_COST_USD,
-            "budget_used_percent": round(100 * cost / MAX_PROJECT_COST_USD, 2),
+            "cache_write_tokens": int(usage.get('cache_write_tokens', 0) or 0),
+            "unconfirmed_cost_usd": unconfirmed,
+            "selected_model": settings.model,
+            "project_budget_usd": cap,
+            "budget_used_percent": round(100 * (cost + unconfirmed) / cap, 2) if cap is not None else None,
             **history,
         }
-        if len(history["models"]) == 1 and history["models"][0] in MODEL_PRICES:
+        if len(history["models"]) == 1 and history["models"][0] in MODELS:
             model = history["models"][0]
-            prices = MODEL_PRICES[model]
+            spec = MODELS[model]
             result["pricing"] = {
                 "model": model,
-                "usd_per_million_tokens": prices,
-                "uncached_input_cost_usd": round(max(0, input_tokens - cached) * prices["input"] / 1_000_000, 8),
-                "cached_input_cost_usd": round(cached * prices["cached_input"] / 1_000_000, 8),
-                "output_cost_usd": round(output_tokens * prices["output"] / 1_000_000, 8),
+                "usd_per_million_tokens": spec.prices(),
+                "long_context_usd_per_million_tokens": spec.prices(spec.long_context_threshold + 1),
+                "long_context_threshold": spec.long_context_threshold,
             }
         else:
             result["pricing"] = None
@@ -306,6 +311,8 @@ class Verification:
             f" (local {local_estimate / 1000:g} s)" if local_estimate else ""
         )
         models = ", ".join(ai["models"]) or "no data"
+        budget = ('no cap' if ai['project_budget_usd'] is None else
+                  f"${ai['project_budget_usd']:g}; {ai['budget_used_percent']:g}% used or reserved")
         solve_result = (
             f"{solve['accepted_runs']}/{solve['run_count']} runs with score 100"
             if solve.get("available") and solve.get("run_count") else "no completed runs"
@@ -324,7 +331,8 @@ class Verification:
                  f"| Time | limit {package['time_limit_ms']} ms/test{local_suffix}; {observed}; estimated full-package maximum {estimated_seconds:g} s/solution{estimate_suffix} |",
                  f"| Memory | limit {package['memory_limit_kb']} KiB; measured maximum {str(memory_observed) + ' KiB' if memory_observed is not None else 'none'} |",
                  f"| Incorrect-solution tests | {mutation} |",
-                 f"| API | {models}; input {ai['input_tokens']:,} (cached {ai['cached_input_tokens']:,}), output {ai['output_tokens']:,}; **${ai['cost_usd']:.8f}** |", ""]
+                 f"| API | {models}; input {ai['input_tokens']:,} (cached {ai['cached_input_tokens']:,}), output {ai['output_tokens']:,}; **${ai['cost_usd']:.8f}** |",
+                 f"| Project budget | {budget}; unconfirmed requests reserved ${ai['unconfirmed_cost_usd']:.8f}; selected model {ai['selected_model']} |", ""]
         if solve.get("solution_results"):
             lines.extend(["## Solutions", "",
                           "| Solution | Points | Score-100 runs | Max time | Total time | Max memory |",

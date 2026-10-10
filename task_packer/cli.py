@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 
 from .console import ProjectDeleted, SavedExit, ask_int
@@ -14,6 +13,7 @@ from .openai_client import OpenAIClient
 from .storage import StateReadError, StateStore
 from .workflow import Workflow
 from .paths import project_code
+from .settings import Settings
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -224,7 +224,8 @@ def main() -> None:
                 raise RuntimeError('Package verification failed.')
             return
         if state.config is not None and not state.usage.get("input_tokens"):
-            model = os.environ.get('OPENAI_MODEL', 'gpt-6-astra')
+            settings = Settings.from_environment()
+            model = settings.model
             input_tokens, output_tokens, estimate = conservative_project_estimate(
                 len(state.config.subtasks), state.config.task_type, model
             )
@@ -233,6 +234,7 @@ def main() -> None:
                 f"${estimate:.3f} (assuming {input_tokens:,} input and "
                 f"{output_tokens:,} output tokens). PDFs and revisions may change this."
             )
+            print('Project budget: ' + (f'${settings.budget_usd:g}' if settings.budget_usd is not None else 'no cap'))
         while True:
             if not state.finished:
                 Workflow(state, store, OpenAIClient(starting_usage=state.usage)).run()
