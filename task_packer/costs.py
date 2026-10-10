@@ -4,14 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .settings import MODELS, Settings, model_spec
 
-MAX_PROJECT_COST_USD = 5.00
-
-# USD per million tokens. Values are intentionally kept in code so the estimate
-# is auditable; the README gives the date and price source.
-MODEL_PRICES = {
-    "gpt-6-astra": {"input": 10.00, "cached_input": 1.00, "output": 50.00},
-}
+# Short-context standard rates, derived from the shared model definition.
+MODEL_PRICES = {name: spec.prices() for name, spec in MODELS.items()}
 
 
 @dataclass(slots=True)
@@ -19,31 +15,30 @@ class TokenUsage:
     input_tokens: int = 0
     cached_input_tokens: int = 0
     output_tokens: int = 0
+    cache_write_tokens: int = 0
 
 
 def usage_cost(model: str, usage: TokenUsage) -> float:
     """Calculate cost from actual token counts returned by the API."""
 
-    if model not in MODEL_PRICES:
-        raise RuntimeError(
-            f"No price is configured for model {model!r}. Use gpt-6-astra or extend MODEL_PRICES."
-        )
-    price = MODEL_PRICES[model]
-    uncached = max(0, usage.input_tokens - usage.cached_input_tokens)
+    price = model_spec(model).prices(usage.input_tokens)
+    uncached = max(0, usage.input_tokens - usage.cached_input_tokens - usage.cache_write_tokens)
     return (
         uncached * price["input"]
         + usage.cached_input_tokens * price["cached_input"]
+        + usage.cache_write_tokens * price["cache_write"]
         + usage.output_tokens * price["output"]
     ) / 1_000_000
 
 
-def conservative_project_estimate(subtasks: int, task_type: str, model: str = 'gpt-6-astra') -> tuple[int, int, float]:
+def conservative_project_estimate(subtasks: int, task_type: str, model: str | None = None) -> tuple[int, int, float]:
     """Return explicit assumptions: input tokens, output tokens, and an estimated cost.
 
     This does not promise a PDF/image token count. The exact amount is known only
     after an API response and is stored in project state.
     """
 
+    model = Settings.from_environment(model).model
     calls = 6 + subtasks * 4 + (1 if task_type == "multiple" else 0)
     if task_type == "auto":
         calls += 1
@@ -57,8 +52,8 @@ def conservative_project_estimate(subtasks: int, task_type: str, model: str = 'g
         output_tokens -= 5_000
     if task_type == "auto":
         output_tokens += 3_000
-    cost = usage_cost(
-        model,
-        TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens),
-    )
+    # These assumptions are per request. Summing input across requests must not
+    # accidentally select the long-context rate for a large project.
+    price = model_spec(model).prices(6_000)
+    cost = (input_tokens * price['input'] + output_tokens * price['output']) / 1_000_000
     return input_tokens, output_tokens, cost

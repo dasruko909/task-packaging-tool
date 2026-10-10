@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -131,6 +132,9 @@ def _detect_subtasks_with_ai(
     finally:
         state.usage = client.usage_dict()
         store.save(state)
+        if client.events:
+            from .revisions import snapshot
+            snapshot(store, 'api-calls', json.dumps(client.events.pop(), ensure_ascii=False, indent=2))
 
 
 def _valid_codename(value: str) -> bool:
