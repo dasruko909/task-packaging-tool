@@ -143,7 +143,12 @@ def download_for_editing(codename: str) -> StateStore:
 def show_doctor() -> bool:
     data = doctor()
     heading("Solve environment")
-    print("Ready." if data["ready"] and data["sandbox_ready"] else "Environment needs attention.")
+    if data["ready"] and data["sandbox_ready"]:
+        print("Ready.")
+    elif not data["ready"] and data["sandbox_ready"] and data.get("wheel_error"):
+        print("Basic workflows are ready; Solve features need attention.")
+    else:
+        print("Environment needs attention.")
     print(f"Python: {data['python']}")
     sandbox = data.get('sandbox') or 'missing — install the bubblewrap package'
     print(f"bubblewrap isolation: {sandbox}")

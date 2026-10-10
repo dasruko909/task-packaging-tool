@@ -27,8 +27,9 @@ WHEEL_NAMES = (
     "solve_cli-1.0.14-py3-none-any.whl",
 )
 WHEEL_MESSAGE = (
-    "Private Solve 4 wheels are missing. Wrocław students should place the "
-    "authorised wheel files in vendor/wheels/; see README.md."
+    "Solve 4 features are unavailable until the authorised private wheels are "
+    "installed. Wrocław students can place both wheel files in vendor/wheels/ "
+    "and launch ./run.sh again; see README.md."
 )
 LOCAL_TIME_LIMIT_NUMERATOR = 5
 LOCAL_TIME_LIMIT_DENOMINATOR = 4
