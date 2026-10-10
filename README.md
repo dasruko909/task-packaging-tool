@@ -4,13 +4,21 @@ A step-by-step tool that turns a task statement into a checked Solve 4 package. 
 
 ## First launch on Linux
 
-Python 3.10 or newer is required. On Ubuntu or Debian, install the requirements, clone the repository, and start setup with one command. Internet access is needed for the system packages, GitHub, and public Python packages:
+Python 3.10 or newer is required. These first-run commands install system requirements, clone the repository, and start setup. Internet access is needed for system packages, GitHub, and public Python packages.
+
+On Ubuntu or Debian:
 
 ```bash
 sudo apt update && sudo apt install -y git python3 python3-venv g++ bubblewrap && git clone https://github.com/dasruko909/task-packaging-tool.git && cd task-packaging-tool && mkdir -p vendor/wheels && ./run.sh --setup
 ```
 
-This creates a local `.venv`, installs the public Python requirements, and prompts for the OpenAI API key and Solve server token. The API key is used to generate or revise materials; the Solve token is used for server actions such as download, upload, preview, or rejudge. Credentials are saved privately outside task packages. Basic local use does not require Solve server access; to skip configuring it, provide `OPENAI_API_KEY` through your environment and run `./run.sh`. If you already have a checkout, update it with `git pull --ff-only` instead of cloning. Other Linux distributions should install the equivalent packages with their package manager.
+On Fedora:
+
+```bash
+sudo dnf install -y git python3 python3-pip gcc-c++ bubblewrap && git clone https://github.com/dasruko909/task-packaging-tool.git && cd task-packaging-tool && mkdir -p vendor/wheels && ./run.sh --setup
+```
+
+The launcher creates a local `.venv`, installs the public Python requirements, and prompts for the OpenAI API key and Solve server token. The API key is used to generate or revise materials; the Solve token is used for server actions such as download, upload, preview, or rejudge. Credentials are saved privately outside task packages. Basic local use does not require Solve server access; to skip configuring it, provide `OPENAI_API_KEY` through your environment and run `./run.sh`. On an existing checkout, use `git pull --ff-only` instead of cloning. Other Linux distributions should install equivalent packages with their package manager.
 
 The app can run without the private Solve wheels, but native Solve validation, compilation/grading, ZIP export, and server features need them. These wheels are not publicly distributed or included in this repository. If you are authorized to use them, place both files below in `vendor/wheels/`, then run `./run.sh`; the launcher installs them in `.venv`. Do not commit or redistribute the private third-party files.
 
