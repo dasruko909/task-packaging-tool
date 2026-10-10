@@ -83,7 +83,7 @@ class Review:
             data = data or {"description": "Code supplied by the author."}
         prompt = ("Paste text" if text else
                   f"Paste field {field} (code without a Markdown fence)" if field else
-                  "Paste complete JSON matching the prompt; brute and small_generator fields contain Python")
+                  "Paste complete JSON matching the prompt; brute and small_generator fields contain C++17")
         slot = "manual:" + key
         try:
             if action == "f":

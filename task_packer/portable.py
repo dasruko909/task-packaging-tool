@@ -2,6 +2,7 @@
 from __future__ import annotations
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -10,6 +11,16 @@ import tempfile
 from .sandbox import isolated
 from .paths import checked_tree
 from .registry import load_manifest, validate_manifest, safe_file
+
+
+def runtime_mounts() -> list[Path]:
+    """Mount the active virtualenv runtime without exposing its root files."""
+    root = Path(sys.prefix)
+    if sys.prefix == sys.base_prefix:
+        return []
+    return [path for path in (
+        root / 'pyvenv.cfg', root / 'bin', root / 'lib', root / 'lib64'
+    ) if path.exists()]
 
 
 def main() -> None:
@@ -48,7 +59,11 @@ if sys.argv[2]=='reproduce':
 p.validate()
 print('Validation and reproduction completed.' if sys.argv[2]=='reproduce' else 'Validation and build completed. Full judging results are available in the packer.')
 '''
-        command = isolated([sys.executable, '-c', program, str(package), 'reproduce' if reproduce else 'check'], work=work)
+        command = isolated(
+            [sys.executable, '-c', program, str(package), 'reproduce' if reproduce else 'check'],
+            work=work, readable=runtime_mounts(),
+            env={'PATH': str(Path(sys.executable).parent) + os.pathsep + os.defpath},
+        )
         subprocess.run(command, check=True, timeout=1200)
 
 

@@ -17,6 +17,35 @@ from task_packer.solve_native import runtime_mounts, runtime_python
 
 @unittest.skipUnless(shutil.which("bwrap"), "bubblewrap is required")
 class SandboxIsolationTests(unittest.TestCase):
+    def test_native_python_uses_mounted_interpreter_without_virtualenv_access(self) -> None:
+        code = r'''
+import tempfile
+from pathlib import Path
+from task_packer.solve_worker import install_local_wall_time_margin
+from task_packer.solve_native import runtime_python
+from libsolve.package.program import Program
+from libsolve.execution import ExecutionStatus
+install_local_wall_time_margin()
+with tempfile.TemporaryDirectory() as temporary:
+ root = Path(temporary)
+ source = root / 'main.py'
+ runtime_config = runtime_python().parent.parent / 'pyvenv.cfg'
+ source.write_text('from pathlib import Path\nassert not Path(' + repr(str(runtime_config)) + ').exists()\nprint(42)\n')
+ program = Program(root, 'main.py', 'python3')
+ program.prepare(tmp_dir=root)
+ output = root / 'answer'
+ diagnostic = root / 'diagnostic'
+ result = program.run(stdout=output, stderr=diagnostic, time_limit=2000)
+ assert result.status == ExecutionStatus.OK, (result, diagnostic.read_text())
+ assert output.read_text() == '42\n'
+'''
+        result = subprocess.run(
+            [str(runtime_python()), '-c', code], capture_output=True, text=True,
+            timeout=30, env={'PATH': str(runtime_python().parent) + os.pathsep + os.defpath,
+                             'LANG': 'C.UTF-8'},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_native_program_and_checker_have_private_file_views(self) -> None:
         code = r'''
 import tempfile
