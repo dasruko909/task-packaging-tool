@@ -17,6 +17,7 @@ from .storage import atomic_write_text, write_json
 from .sandbox import isolated
 from .paths import checked_path, checked_tree
 from .registry import safe_file, load_manifest
+from .freshness import exported_path, fingerprints
 
 ROOT = Path(__file__).resolve().parent.parent
 WHEELS = ROOT / "vendor/wheels"
@@ -128,9 +129,7 @@ def copy_package(source: Path, destination: Path) -> None:
     load_manifest(source)
     for path in sorted(source.rglob("*")):
         relative = path.relative_to(source)
-        if any(part.startswith("prepared_") or part in {"__pycache__", "verification"} for part in relative.parts):
-            continue
-        if ".before-repair-" in path.name:
+        if not exported_path(relative):
             continue
         if path.is_symlink():
             raise RuntimeError(f"Package contains a symbolic link: {relative}")
@@ -140,6 +139,15 @@ def copy_package(source: Path, destination: Path) -> None:
         else:
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, target)
+
+
+def copy_verified_package(source: Path, destination: Path, expected: dict[str, str]) -> None:
+    copy_package(source, destination)
+    copied = fingerprints(destination)
+    exported = {name: digest for name, digest in expected.items()
+                if name.startswith('__packer__/') or exported_path(Path(name))}
+    if copied != exported:
+        raise RuntimeError('Materials changed while copying the package; rerun checks.')
 
 
 def add_local_time_margin(package: Path, action: str) -> dict | None:
@@ -177,6 +185,7 @@ def native_action(config: ProjectConfig, action: str = "check") -> dict:
         result = {'ok': False, 'error': 'bubblewrap isolation is not working: ' + health['sandbox_error']}
         write_json(result_path, result)
         return result
+    before = fingerprints(config.package_dir)
     from .solve4 import source_extension
     manifest = load_manifest(config.package_dir)
     groups = [group for group in manifest.get("test_groups", []) if not group.get("is_sample")]
@@ -192,7 +201,7 @@ def native_action(config: ProjectConfig, action: str = "check") -> dict:
     with tempfile.TemporaryDirectory(prefix="packer-solve-") as temporary:
         work = Path(temporary)
         package = work / config.codename
-        copy_package(config.package_dir, package)
+        copy_verified_package(config.package_dir, package, before)
         execution_limits = add_local_time_margin(package, action)
         output = work / "result.json"
         inputs = work / "assignments.json"
@@ -217,6 +226,10 @@ def native_action(config: ProjectConfig, action: str = "check") -> dict:
             finally:
                 kill(process)
         result = json.loads(output.read_text()) if output.exists() else {"ok": False, "error": "Solve did not write a result; see the log."}
+    if fingerprints(config.package_dir) != before:
+        result = {'ok': False, 'error': 'Materials changed during Solve verification; rerun checks.'}
+    elif result.get('ok') is True:
+        result['source_sha256'] = before
     if execution_limits:
         result["execution_limits"] = execution_limits
     result["versions"] = health["versions"]
@@ -230,14 +243,18 @@ def native_validate(config: ProjectConfig) -> tuple[bool | None, str]:
     return result["ok"], result.get("error", "Manifest and files passed validation by the original libsolve 1.0.11.")
 
 
-def archive_package(config: ProjectConfig) -> Path:
+def archive_package(config: ProjectConfig, *, expected: dict | None = None) -> Path:
     """Export a complete package; keep fixed outputs so CLI upload cannot remove them."""
     root = config.package_dir
     destination = checked_path(root.parent / (config.codename + ".zip"))
     checked_path(destination.with_suffix(".zip.sha256"))
-    with tempfile.TemporaryDirectory(prefix="packer-export-") as temporary:
+    recover_export(destination)
+    before = fingerprints(root)
+    if expected is not None and before != expected:
+        raise RuntimeError('Materials changed since verification; rerun checks before exporting.')
+    with tempfile.TemporaryDirectory(prefix=f'.{config.codename}-export-', dir=destination.parent) as temporary:
         work = Path(temporary) / config.codename
-        copy_package(root, work)
+        copy_verified_package(root, work, before)
         manifest = load_manifest(work)
         if manifest["type"] != "solve-interactive":
             for group in manifest["test_groups"]:
@@ -263,6 +280,73 @@ def archive_package(config: ProjectConfig) -> Path:
             for path in sorted(work.rglob("*")):
                 if path.is_file():
                     archive.write(path, str(path.relative_to(work)))
-        shutil.copy2(temporary_zip, destination)
-    atomic_write_text(destination.with_suffix(".zip.sha256"), hashlib.sha256(destination.read_bytes()).hexdigest() + "  " + destination.name + "\n")
+        temporary_checksum = Path(temporary) / 'package.sha256'
+        atomic_write_text(temporary_checksum, hashlib.sha256(temporary_zip.read_bytes()).hexdigest()
+                          + "  " + destination.name + "\n")
+        if fingerprints(root) != before:
+            raise RuntimeError('Materials changed during export; rerun checks before exporting.')
+        publish_export(destination, temporary_zip, temporary_checksum, root, before)
     return destination
+
+
+def recover_export(destination: Path) -> None:
+    """Roll back an interrupted ZIP/checksum publication using fixed safe paths."""
+    work = checked_tree(destination.parent / f'.{destination.name}-publication')
+    targets = (checked_path(destination), checked_path(destination.with_suffix('.zip.sha256')))
+    if not work.exists():
+        return
+    try:
+        state = json.loads((work / 'journal.json').read_text())
+    except (OSError, ValueError) as error:
+        raise RuntimeError(f'Unreadable export recovery journal: {work}') from error
+    if (not isinstance(state, dict) or set(state) != {'phase', 'originals'}
+            or not isinstance(state['phase'], str)
+            or state['phase'] not in {'preparing', 'ready', 'committed'}
+            or not isinstance(state['originals'], list) or len(state['originals']) != 2
+            or any(type(value) is not bool for value in state['originals'])
+            or any((p.name not in {'journal.json', 'original-0', 'original-1', 'restore-0', 'restore-1'}
+                    and not (p.name.startswith('.journal.json.') and p.name.endswith('.tmp')))
+                   or not p.is_file() for p in work.iterdir())):
+        raise ValueError(f'Unsafe export recovery journal: {work}')
+    if state['phase'] == 'ready':
+        for index, existed in enumerate(state['originals']):
+            if existed and not (work / f'original-{index}').is_file():
+                raise ValueError(f'Missing original export artifact: {work}')
+        for index, (target, existed) in enumerate(zip(targets, state['originals'])):
+            if existed:
+                restore = work / f'restore-{index}'
+                shutil.copy2(work / f'original-{index}', restore)
+                restore.replace(target)
+            else:
+                target.unlink(missing_ok=True)
+    shutil.rmtree(work)
+
+
+def publish_export(destination: Path, archive: Path, checksum: Path,
+                   root: Path, expected: dict[str, str]) -> None:
+    targets = (checked_path(destination), checked_path(destination.with_suffix('.zip.sha256')))
+    work = checked_tree(destination.parent / f'.{destination.name}-publication')
+    work.mkdir()
+    state = {'phase': 'preparing', 'originals': [p.is_file() for p in targets]}
+    try:
+        write_json(work / 'journal.json', state)
+        for index, (target, existed) in enumerate(zip(targets, state['originals'])):
+            if existed:
+                shutil.copy2(target, work / f'original-{index}')
+        state['phase'] = 'ready'
+        write_json(work / 'journal.json', state)
+        if fingerprints(root) != expected:
+            raise RuntimeError('Materials changed during export; rerun checks before exporting.')
+        archive.replace(targets[0])
+        checksum.replace(targets[1])
+        if fingerprints(root) != expected:
+            raise RuntimeError('Materials changed during export; rerun checks before exporting.')
+        state['phase'] = 'committed'
+        write_json(work / 'journal.json', state)
+    except BaseException:
+        if (work / 'journal.json').is_file():
+            recover_export(destination)
+        else:
+            shutil.rmtree(work)
+        raise
+    shutil.rmtree(work)

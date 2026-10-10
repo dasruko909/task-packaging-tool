@@ -231,7 +231,7 @@ def cli_remote(config: ProjectConfig, action: str) -> None:
         result = check(config, reuse_native=True)
         if result["ok"] is not True:
             raise RuntimeError("Upload requires a successful package check.")
-        archive = archive_package(config)
+        archive = archive_package(config, expected=result.get('source_sha256'))
         print(f"Ready package: {archive.resolve()}\nTask: {config.codename}\nServer: {connection['host']}")
         if not ask_yes_no("Upload this package to the specified server?"):
             return
@@ -239,7 +239,7 @@ def cli_remote(config: ProjectConfig, action: str) -> None:
         result = check(config, reuse_native=True)
         if result['ok'] is not True:
             raise RuntimeError('Statement compilation requires a successful package check.')
-        archive = archive_package(config)
+        archive = archive_package(config, expected=result.get('source_sha256'))
         print(f"Statement and tests will be sent for PDF/HTML compilation at {connection['host']}.")
         if not ask_yes_no("Prepare a preview on the Solve server?"):
             return
@@ -361,28 +361,20 @@ def check(config: ProjectConfig, *, reuse_native: bool = False) -> dict:
                            project_command(config.codename, '--audit-statement') +
                            '\nThe audit and any statement revision use the API. --verify alone does not make API calls.')
     from .solve4 import local_validation
-    from .freshness import changed_files, certify, certified_native_result
+    from .freshness import changed_files, certify, certified_native_result, fingerprints
     from .verification import Verification
     errors = local_validation(config)
     if errors:
         raise RuntimeError('Package errors:\n' + '\n'.join(errors))
+    local_snapshot = fingerprints(config.package_dir)
     changed = changed_files(config)
     if changed:
-        if any(
-            name == 'config.json'
-            or name.startswith('description/')
-            or name in {'no current verification certificate',
-                        'unreadable verification certificate'}
-            for name in changed
-        ):
-            for suffix in ('*.pdf', '*.html'):
-                for preview in checked_tree(config.package_dir / 'description').glob(suffix):
-                    preview.unlink()
         print('Materials changed or are not yet checked; rerunning local checks.')
         report = Verification(config, usage=usage)
         try:
             report.run()
             report.record('Final result', 'PASS', 'Current materials were checked locally.')
+            local_snapshot = report.verified_fingerprints
         except RuntimeError as error:
             report.record('Final result', 'FAIL', str(error))
             raise
@@ -395,12 +387,14 @@ def check(config: ProjectConfig, *, reuse_native: bool = False) -> dict:
             print(f"Solve report: {(config.package_dir / 'verification/solve-check.json').resolve()}")
             return cached
     print("Solve: validation, compilation, and solution checking…")
+    if fingerprints(config.package_dir) != local_snapshot:
+        raise RuntimeError('Materials changed since local verification; rerun checks.')
     result = native_action(config)
     # Native results are part of the main report too, even when local materials
     # were unchanged and only Solve was rerun.
     Verification(config, usage=usage).load_existing().save()
     if result['ok'] is True:
-        certify(config, native=True)
+        certify(config, native=True, expected=local_snapshot)
     for item in result.get("solutions", []):
         print(f"  {item['name']}: {item['score']:g}/100 pkt")
     print("Check completed." if result["ok"] is True else result.get("error", "Incorrect results detected. See the report."))
@@ -419,7 +413,7 @@ def action(config: ProjectConfig, name: str) -> None:
         result = check(config, reuse_native=True)
         if result["ok"] is not True:
             raise RuntimeError("Fix package errors first.")
-        print(f"ZIP ready: {archive_package(config).resolve()}")
+        print(f"ZIP ready: {archive_package(config, expected=result.get('source_sha256')).resolve()}")
     elif name in {"preview", "upload"}:
         cli_remote(config, name)
     elif name == "rejudge":

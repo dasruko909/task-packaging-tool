@@ -5,6 +5,7 @@ import json
 import hashlib
 import re
 import tempfile
+import shutil
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -15,7 +16,7 @@ from .models import ProjectConfig
 from .storage import atomic_write_text, read_text_exact, write_json
 from .registry import records, solution_path, safe_file, load_manifest, programs
 from .paths import checked_tree, checked_path
-from .freshness import fingerprints
+from .freshness import fingerprints, exported_path
 
 
 def verification_program(directory: Path, stem: str) -> Path:
@@ -57,6 +58,8 @@ class Verification:
         self.checks: list[dict[str, str]] = []
         self.regenerate_outputs = regenerate_outputs
         self.usage = dict(usage or {})
+        self.input_overrides: dict[str, str] = {}
+        self.verified_fingerprints: dict[str, str] | None = None
 
     @staticmethod
     def _read_json(path: Path, default: Any) -> Any:
@@ -405,6 +408,31 @@ class Verification:
             raise ExecutionError(f"{error}\nInput: {data[:2000]}\nReference: {reference[:2000]}\nCandidate: {candidate[:2000]}", judge) from error
 
     def run(self) -> None:
+        recover_tests(self.root)
+        before = fingerprints(self.root)
+        self.verified_fingerprints = None
+        with tempfile.TemporaryDirectory(prefix=f'.{self.root.name}-tests-',
+                                         dir=self.root.parent) as temporary:
+            tests = Path(temporary) / 'tests'
+            if (self.root / 'tests').exists():
+                shutil.copytree(self.root / 'tests', tests)
+            else:
+                tests.mkdir()
+            for name, data in self.input_overrides.items():
+                atomic_write_text(safe_file(tests / 'in', name), data)
+            self._run(tests)
+            if fingerprints(self.root) != before:
+                raise ExecutionError('Materials changed during verification; rerun checks.')
+            expected = {name: digest for name, digest in before.items()
+                        if not name.startswith('tests/')}
+            expected.update({'tests/' + str(path.relative_to(tests)):
+                             hashlib.sha256(path.read_bytes()).hexdigest()
+                             for path in tests.rglob('*') if path.is_file()
+                             and exported_path(Path('tests') / path.relative_to(tests))})
+            publish_tests(self.root, tests, expected)
+            self.verified_fingerprints = expected
+
+    def _run(self, tests: Path) -> None:
         config = self.config
         bundle = self.root / "verification"
         with tempfile.TemporaryDirectory(prefix="packer-check-") as temporary:
@@ -490,7 +518,7 @@ class Verification:
                         "but is not registered in manifest.generators.", source
                     )
                 data = runner.program(source, args=generation["parameters"].split(), seconds=10)
-                atomic_write_text(self.root / "tests/in" / generation["filename"], data)
+                atomic_write_text(safe_file(tests / "in", generation["filename"]), data)
                 again = runner.program(source, args=generation['parameters'].split(), seconds=10)
                 if data != again:
                     raise ExecutionError('Generator is not deterministic for the same parameters.', source)
@@ -507,14 +535,14 @@ class Verification:
                         "registered in manifest.solutions.", solution
                     )
             full = solutions[-1][1]
-            inputs = [safe_file(self.root / 'tests/in', test.input) for test in registry]
+            inputs = [safe_file(tests / 'in', test.input) for test in registry]
             output_names = {test.input: test.output for test in registry}
             for test, path in zip(registry, inputs):
                 subtask = next((item.index for item in config.subtasks if (item.group_name or f'{item.index:02d}') == test.group), 0)
                 source = (
                     self.root / "generators" / test.generation["generator"]
                     if test.generation
-                    else path
+                    else safe_file(self.root / "tests/in", test.input)
                 )
                 validate_input(read_text_exact(path), subtask, source)
             self.record('Input validation', 'PASS', f'Checked format and constraints of {len(inputs)} tests, including group conditions.')
@@ -573,9 +601,10 @@ class Verification:
             for input_path in inputs:
                 data = read_text_exact(input_path)
                 answer = runner.program(full, data, seconds=seconds, memory_kb=config.memory_limit_kb)
-                expected_path = self.root / "tests/out" / output_names.get(input_path.name, input_path.name.replace(".in", ".out"))
+                expected_path = tests / "out" / output_names.get(input_path.name, input_path.name.replace(".in", ".out"))
                 generated = any(test['input'] == input_path.name and not test.get('output') for group in manifest['test_groups'] for test in group['tests'])
-                if expected_path.exists() and not (self.regenerate_outputs and generated):
+                if expected_path.exists() and not ((self.regenerate_outputs and generated and not config.existing_tests)
+                                                      or input_path.name in self.input_overrides):
                     expected = read_text_exact(expected_path)
                     valid = (self.check_answer(runner, judge, data, expected, answer) == 100)
                     if not valid:
@@ -591,7 +620,7 @@ class Verification:
                 assigned = [path for path in inputs if path.name in names]
                 for path in assigned:
                     data = read_text_exact(path)
-                    expected_path = self.root / "tests/out" / output_names.get(path.name, path.name.replace(".in", ".out"))
+                    expected_path = tests / "out" / output_names.get(path.name, path.name.replace(".in", ".out"))
                     expected = pending_outputs[expected_path] if expected_path in pending_outputs else read_text_exact(expected_path)
                     answer = runner.program(solution, data, seconds=seconds, memory_kb=config.memory_limit_kb)
                     valid = (self.check_answer(runner, judge, data, expected, answer) == 100)
@@ -659,7 +688,7 @@ class Verification:
                 outcome = 'survived'
                 for input_path in inputs:
                     data = read_text_exact(input_path)
-                    expected_path = self.root / 'tests/out' / output_names[input_path.name]
+                    expected_path = tests / 'out' / output_names[input_path.name]
                     expected = pending_outputs.get(expected_path)
                     if expected is None:
                         expected = read_text_exact(expected_path)
@@ -689,3 +718,61 @@ class Verification:
                     import time
                     atomic_write_text(self.root / 'verification/output-history' / f'{path.name}.{time.time_ns()}', read_text_exact(path))
                 atomic_write_text(path, answer)
+
+
+def recover_tests(root: Path) -> None:
+    """Restore a complete test tree after an interrupted directory replacement."""
+    work = checked_tree(root.parent / f'.{root.name}-test-replacement')
+    destination = checked_tree(root / 'tests')
+    if not work.exists():
+        return
+    try:
+        state = json.loads((work / 'journal.json').read_text())
+    except (OSError, ValueError) as error:
+        raise RuntimeError(f'Unreadable test recovery journal: {work}') from error
+    if (not isinstance(state, dict) or set(state) != {'phase', 'original'}
+            or not isinstance(state['phase'], str)
+            or state['phase'] not in {'preparing', 'ready', 'committed'}
+            or type(state['original']) is not bool
+            or (work / 'original').exists() and not (work / 'original').is_dir()
+            or any(p.name not in {'original', 'journal.json'}
+                   and not (p.name.startswith('.journal.json.') and p.name.endswith('.tmp')
+                            and p.is_file()) for p in work.iterdir())):
+        raise ValueError(f'Unsafe test recovery journal: {work}')
+    original = work / 'original'
+    if state['phase'] == 'ready':
+        if state['original'] and original.is_dir():
+            if destination.exists():
+                shutil.rmtree(destination)
+            original.replace(destination)
+        elif not state['original'] and destination.exists():
+            shutil.rmtree(destination)
+        # No original means either the first rename had not happened yet or
+        # recovery already restored it before interruption.
+    shutil.rmtree(work)
+
+
+def publish_tests(root: Path, candidate: Path, expected: dict[str, str]) -> None:
+    work = checked_tree(root.parent / f'.{root.name}-test-replacement')
+    destination = checked_tree(root / 'tests')
+    checked_tree(candidate)
+    work.mkdir()
+    state = {'phase': 'preparing', 'original': destination.exists()}
+    try:
+        write_json(work / 'journal.json', state)
+        state['phase'] = 'ready'
+        write_json(work / 'journal.json', state)
+        if state['original']:
+            destination.replace(work / 'original')
+        candidate.replace(destination)
+        if fingerprints(root) != expected:
+            raise ExecutionError('Materials changed during test publication; rerun checks.')
+        state['phase'] = 'committed'
+        write_json(work / 'journal.json', state)
+    except BaseException:
+        if (work / 'journal.json').is_file():
+            recover_tests(root)
+        else:
+            shutil.rmtree(work)
+        raise
+    shutil.rmtree(work)
