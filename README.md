@@ -4,48 +4,22 @@ A step-by-step tool that turns a task statement into a checked Solve 4 package. 
 
 ## First launch on Linux
 
-Clone the canonical repository, or run `git pull` in an existing checkout:
+On Ubuntu or Debian, install the requirements, clone the repository, and start setup with one command. Internet access is needed for the system packages, GitHub, and public Python packages:
 
 ```bash
-git clone https://github.com/dasruko909/task-packaging-tool.git
-cd task-packaging-tool
+sudo apt update && sudo apt install -y git python3 python3-venv g++ bubblewrap && git clone https://github.com/dasruko909/task-packaging-tool.git && cd task-packaging-tool && ./run.sh --setup
 ```
 
-On Ubuntu or Debian, install the system requirements (other Linux distributions should install the equivalent packages):
+This creates a local `.venv`, installs the public Python requirements, and prompts for the OpenAI API key and Solve server token. The API key is used to generate or revise materials; the Solve token is used for server actions such as download, upload, preview, or rejudge. Credentials are saved privately outside task packages. Basic local use does not require Solve server access; to skip configuring it, provide `OPENAI_API_KEY` through your environment and run `./run.sh`. If you already have a checkout, update it with `git pull --ff-only` instead of cloning. Other Linux distributions should install the equivalent packages with their package manager.
 
-```bash
-sudo apt update
-sudo apt install -y git python3 python3-venv g++ bubblewrap
-```
-
-The first launcher run creates `.venv` and installs the Python requirements. Let each computer create its own `.venv`; do not copy one from another machine. Check Python, the compiler, Bubblewrap isolation, and Solve availability with:
-
-```bash
-./run.sh --doctor
-```
-
-### Optional Solve 4 features
-
-The private Solve 4 wheels are not included. If you are authorized to use them, put both exact files in `vendor/wheels/` before launching:
+The app can run without the private Solve wheels, but native Solve validation, compilation/grading, ZIP export, and server features need them. These wheels are not publicly distributed or included in this repository. If you are authorized to use them, place both files below in `vendor/wheels/`, then run `./run.sh`; the launcher installs them in `.venv`. Do not commit or redistribute the private third-party files.
 
 ```text
 libsolve-1.0.11-py3-none-any.whl
 solve_cli-1.0.14-py3-none-any.whl
 ```
 
-The launcher installs them into `.venv`. These third-party wheels remain private; do not commit or redistribute them. Without them, basic project work and package generation remain available. Native Solve validation, build/grading and ZIP export, standard-checker installation, downloading tasks, and Solve server actions require the wheels. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-
-### Credentials and start
-
-Run `./run.sh --setup` when you need both credential types. It prompts for the Solve server connection/token and OpenAI API key, then stores them privately outside task packages. An OpenAI key is needed to generate or revise materials; a Solve token is needed only for server actions such as download, upload, preview, or rejudge. For generation without Solve server access, provide `OPENAI_API_KEY` through your environment and start with `./run.sh` instead of `--setup`. Never paste credentials into task materials or share them in reports.
-
-Start the interactive app with:
-
-```bash
-./run.sh
-```
-
-Choose an action from the menu; press Enter to use the displayed default. Progress is saved so you can close the terminal and resume later.
+Run `./run.sh --doctor` to check Python, compilers, Bubblewrap isolation, and Solve availability, then use `./run.sh` to start the app. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party notices.
 
 ## Create a task
 
