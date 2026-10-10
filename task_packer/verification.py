@@ -398,7 +398,9 @@ class Verification:
         for path, text in zip(paths, (data, reference, candidate)):
             atomic_write_text(path, text)
         try:
-            return score(runner.program(judge, args=[str(p) for p in paths], seconds=10))
+            return score(runner.program(
+                judge, args=[str(p) for p in paths], seconds=10, readable=paths
+            ))
         except ExecutionError as error:
             raise ExecutionError(f"{error}\nInput: {data[:2000]}\nReference: {reference[:2000]}\nCandidate: {candidate[:2000]}", judge) from error
 

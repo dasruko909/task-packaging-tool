@@ -48,12 +48,15 @@ class Runner:
 
     def run(self, command: list[str], *, data: str = "", seconds: float = 3,
             memory_kb: int = 262144, source: Path | None = None,
-            cwd: Path | None = None) -> str:
+            cwd: Path | None = None, readable=(), writable_work: bool = True,
+            writable=()) -> str:
+        work = (cwd or self.directory).resolve()
         with tempfile.TemporaryFile() as inp, tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
             inp.write(data.encode()); inp.seek(0)
             try:
                 process = subprocess.Popen(
-                    isolated(command, work=self.directory, readable=[self.includes], cwd=cwd),
+                    isolated(command, work=work, readable=readable, cwd=cwd,
+                             writable_work=writable_work, writable=writable),
                     stdin=inp, stdout=out, stderr=err, cwd=cwd or self.directory,
                     start_new_session=True, preexec_fn=limits(seconds, memory_kb),
                     env={"PATH": os.defpath, "LANG": "C.UTF-8"},
@@ -108,7 +111,7 @@ class Runner:
             'sys.argv=sys.argv[3:]; runpy.run_path(sys.argv[0],run_name="__main__")'
         )
         return [
-            sys.executable, '-I', '-c', launcher,
+            str(Path(sys.executable).resolve()), '-I', '-c', launcher,
             str(root), str(source.parent), str(source),
         ]
 
@@ -169,7 +172,9 @@ class Runner:
         staged_source = stage / files[source]
         if selected == "python3":
             # Compile without writing __pycache__ alongside source files.
-            self.run([sys.executable, "-c", "import ast,sys; ast.parse(open(sys.argv[1]).read())", str(staged_source)], source=source, cwd=stage)
+            self.run([str(Path(sys.executable).resolve()), "-c",
+                      "import ast,sys; ast.parse(open(sys.argv[1]).read())",
+                      str(staged_source)], source=source, cwd=stage)
             # Isolated mode intentionally drops the script directory from
             # sys.path. Add only the staged dependency tree back for imports.
             command = self._python_command(staged_source, stage)
@@ -180,7 +185,8 @@ class Runner:
             binary = stage / "program"
             self.run([compiler, str(staged_source), "-O2", "-std=c++17" if selected == "cpp17" else "-std=c11",
                       "-I", str(stage), "-I", str(self.includes), "-o", str(binary)],
-                     seconds=45, memory_kb=1048576, source=source, cwd=stage)
+                     seconds=45, memory_kb=1048576, source=source, cwd=stage,
+                     readable=[self.includes])
             command = [str(binary)]
         self.commands[source] = command
         self.stages[source] = stage
@@ -188,12 +194,13 @@ class Runner:
         return command
 
     def program(self, source: Path, data: str = "", args: list[str] | None = None,
-                seconds: float = 3, memory_kb: int = 262144) -> str:
+                seconds: float = 3, memory_kb: int = 262144, readable=()) -> str:
         try:
             source = source.resolve()
             command = self.compile(source)
             return self.run(command + (args or []), data=data, seconds=seconds,
-                            memory_kb=memory_kb, source=source, cwd=self.stages[source])
+                            memory_kb=memory_kb, source=source, cwd=self.stages[source],
+                            readable=readable, writable_work=False)
         except ExecutionError as error:
             raise ExecutionError(f"{error}\nArguments: {args or []}\nInput: {data[:2000]}", error.source) from error
 
@@ -202,25 +209,6 @@ class Runner:
         judge_command = self.compile(judge)
         contestant_command = self.compile(contestant)
         judge_work = Path(tempfile.mkdtemp(prefix="interaction-judge-", dir=self.directory))
-        contestant_work = Path(tempfile.mkdtemp(prefix="interaction-contestant-", dir=self.directory))
-
-        def private_command(command: list[str], source: Path, work: Path) -> list[str]:
-            """Copy the executable into one side's private writable sandbox."""
-            shutil.copytree(self.stages[source.resolve()], work, dirs_exist_ok=True)
-            if source.suffix == ".py":
-                target = work / self.staged_sources[source.resolve()].relative_to(
-                    self.stages[source.resolve()]
-                )
-                return self._python_command(target, work)
-            target = work / "program"
-            shutil.copy2(Path(command[0]), target)
-            target.chmod(0o755)
-            return [str(target), *command[1:]]
-
-        judge_command = private_command(judge_command, judge.resolve(), judge_work)
-        contestant_command = private_command(
-            contestant_command, contestant.resolve(), contestant_work
-        )
         private_input = judge_work / "input.txt"
         shutil.copy2(input_path, private_input)
         result = judge_work / "verdict.txt"
@@ -229,14 +217,16 @@ class Runner:
         processes = []
         try:
             with tempfile.TemporaryFile() as err:
-                for command, work, stdin, stdout, memory in (
-                    (judge_command + [str(private_input), str(result)], judge_work,
-                     read_a, write_b, 262144),
-                    (contestant_command, contestant_work, read_b, write_a, memory_kb),
+                for command, source, writable, stdin, stdout, memory in (
+                    (judge_command + [str(private_input), str(result)], judge.resolve(),
+                     [judge_work], read_a, write_b, 262144),
+                    (contestant_command, contestant.resolve(), [], read_b, write_a, memory_kb),
                 ):
+                    stage = self.stages[source]
                     processes.append(subprocess.Popen(
-                        isolated(command, work=work), stdin=stdin, stdout=stdout,
-                        stderr=err, cwd=work,
+                        isolated(command, work=stage, cwd=stage, writable_work=False,
+                                 writable=writable), stdin=stdin, stdout=stdout,
+                        stderr=err, cwd=stage,
                         start_new_session=True, preexec_fn=limits(seconds, memory),
                         env={"PATH": os.defpath, "LANG": "C.UTF-8"},
                     ))
@@ -260,4 +250,3 @@ class Runner:
             for process in processes:
                 kill(process)
             shutil.rmtree(judge_work, ignore_errors=True)
-            shutil.rmtree(contestant_work, ignore_errors=True)
