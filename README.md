@@ -2,59 +2,50 @@
 
 A step-by-step tool that turns a task statement into a checked Solve 4 package. It can start from text, a PDF, tests, or an existing package, and saves progress so closing the terminal does not discard work. Polish is the default statement language; enter `en` during setup to generate an English statement. Editorials are generated in English.
 
-## Solve 4 wheels (not included)
+## First launch on Linux
 
-Wrocław students: create `vendor/wheels/` if it is missing, then place the two
-private Solve 4 wheel files there to enable Solve-dependent features:
-
-```text
-vendor/wheels/libsolve-1.0.11-py3-none-any.whl
-vendor/wheels/solve_cli-1.0.14-py3-none-any.whl
-```
-
-These files are intentionally not included in this repository because the author does not have permission to redistribute them. Obtain them from the authorised course or Solve 4 distribution and do not commit or share them through this repository. The launcher installs them when both are present and the exact required versions are not already installed. If you add the files after first launching the app, run `./run.sh` again.
-
-Without the wheels, the basic project and package-generation workflow still works, but some functions will not: native Solve validation, compilation and grading, standard-checker installation, downloading tasks, and server-side Solve actions such as upload, preview and rejudge.
-
-The distributions are third-party components and remain the property of their copyright holders. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Clone the canonical repository, or run `git pull` in an existing checkout:
 
 ```bash
-./run.sh --setup
-./run.sh
+git clone https://github.com/dasruko909/task-packaging-tool.git
+cd task-packaging-tool
 ```
 
-Follow the terminal prompts and choose the letter next to an action. Press Enter to choose the default.
+On Ubuntu or Debian, install the system requirements (other Linux distributions should install the equivalent packages):
 
-## Requirements
+```bash
+sudo apt update
+sudo apt install -y git python3 python3-venv g++ bubblewrap
+```
 
-- Linux or WSL
-- Python 3.10 or newer
-- `g++`
-- `bubblewrap` (`bwrap`) for safe local isolation
-- an OpenAI API key for generation
-- a Solve token only for upload or server-side PDF/HTML preview
-
-The first run creates `.venv` and installs the application requirements. Later launches reuse a healthy environment without contacting pip. Optional Solve wheels are installed only when both local files are present. Check the Solve environment with:
+The first launcher run creates `.venv` and installs the Python requirements. Let each computer create its own `.venv`; do not copy one from another machine. Check Python, the compiler, Bubblewrap isolation, and Solve availability with:
 
 ```bash
 ./run.sh --doctor
 ```
 
-On Ubuntu or WSL, install missing system dependencies with:
+### Optional Solve 4 features
 
-```bash
-sudo apt install bubblewrap g++ python3-venv
+The private Solve 4 wheels are not included. If you are authorized to use them, put both exact files in `vendor/wheels/` before launching:
+
+```text
+libsolve-1.0.11-py3-none-any.whl
+solve_cli-1.0.14-py3-none-any.whl
 ```
 
-## One-time setup
+The launcher installs them into `.venv`. These third-party wheels remain private; do not commit or redistribute them. Without them, basic project work and package generation remain available. Native Solve validation, build/grading and ZIP export, standard-checker installation, downloading tasks, and Solve server actions require the wheels. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-Run:
+### Credentials and start
+
+Run `./run.sh --setup` when you need both credential types. It prompts for the Solve server connection/token and OpenAI API key, then stores them privately outside task packages. An OpenAI key is needed to generate or revise materials; a Solve token is needed only for server actions such as download, upload, preview, or rejudge. For generation without Solve server access, provide `OPENAI_API_KEY` through your environment and start with `./run.sh` instead of `--setup`. Never paste credentials into task materials or share them in reports.
+
+Start the interactive app with:
 
 ```bash
-./run.sh --setup
+./run.sh
 ```
 
-The program asks for the Solve URL (usually `https://solve.edu.pl`), a private Solve API token, and an OpenAI API key. Credentials are stored separately from task packages. You can instead set `OPENAI_API_KEY`. Do not put credentials in task materials, prompts, or feedback; review reports and exports before sharing them.
+Choose an action from the menu; press Enter to use the displayed default. Progress is saved so you can close the terminal and resume later.
 
 ## Create a task
 
