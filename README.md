@@ -167,3 +167,12 @@ Standard rates verified on 2026-10-10, in USD per million tokens:
 All three support Responses, text/image input, structured output, a 1,050,000-token context and up to 128,000 output tokens. Above 272,000 input tokens **in one request**, input/cache rates double and output rates multiply by 1.5 for that whole request. The initial project estimate assumes 6,000 input tokens per call; it is an estimate, not the cap preflight. See the [Responses API reference](https://developers.openai.com/api/reference/python/resources/responses/methods/create) and [PDF input details](https://developers.openai.com/api/docs/guides/file-inputs).
 
 Generation and review requests send relevant task materials to OpenAI, including statement text, PDFs, selected images, code, feedback, and execution diagnostics. Do not supply confidential material without authorization. Task code runs locally without network access inside `bubblewrap`.
+
+Imported Python programs can use helpers declared in `additional_files_names`,
+including nested paths relative to their solution, generator or checker directory.
+Local Runner checks, native Solve preparation/grading and the exported
+`./check_with_solve.sh --reproduce` use only the entry point and those declared files
+in a private staging tree. Helper files and declarations remain in the ZIP and
+verification hashes. Unmodified libsolve 1.0.11 still rejects Python additional
+files; this project-owned adapter supports local execution, not remote jail/server
+execution. No private Solve library source is modified or included in the adapter.

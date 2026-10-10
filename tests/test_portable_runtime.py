@@ -28,7 +28,8 @@ class PortableRuntimeTests(unittest.TestCase):
             (package / 'config.json').write_text('{}')
             # A tiny stand-in proves the runtime boundary; it does not simulate grading.
             (module / 'package.py').write_text(
-                'from pathlib import Path\nimport shutil,sys\n'
+                'from pathlib import Path\nimport shutil,sys\nfrom types import SimpleNamespace\n'
+                'sys.modules["task_packer.native_runtime"] = SimpleNamespace(install_local_wall_time_margin=lambda root: None)\n'
                 'class Package:\n'
                 ' def __init__(self, code, root):\n'
                 '  self.root=root\n'
