@@ -26,6 +26,7 @@ def local_wall_time_limit(time_limit: int | None) -> int | None:
 def install_local_wall_time_margin(checker_root: Path | None = None) -> None:
     """Separate libsolve's no-jail wall watchdog from its CPU-time grading limit."""
     from libsolve.execution.language_utils import LanguageUtils
+    from libsolve.execution.config import PYTHON3_PATH, PYTHON_COMPILATION_SCRIPT
     from libsolve.package.program import Program
 
     if getattr(LanguageUtils, '_packer_wall_margin_installed', False):
@@ -58,7 +59,16 @@ def install_local_wall_time_margin(checker_root: Path | None = None) -> None:
         readable, writable = allowed
         executable = Path(str(cmd.params[0]))
         if executable.is_file():
+            # A virtualenv interpreter symlink is outside the nested sandbox;
+            # execute its mounted target without exposing the virtualenv tree.
+            cmd.params[0] = str(executable.resolve())
             readable = [*readable, executable.resolve()]
+            if executable.resolve() == Path(PYTHON_COMPILATION_SCRIPT).resolve():
+                # The compiler script's env shebang can select a different
+                # system Python and produce bytecode the runtime cannot read.
+                interpreter = Path(PYTHON3_PATH).resolve()
+                cmd.params.insert(0, str(interpreter))
+                readable.append(interpreter)
         with tempfile.TemporaryDirectory(prefix='native-invocation-') as temporary:
             # Redirections stay with the trusted supervisor. The program receives
             # only the resulting descriptors, never the surrounding output tree.
